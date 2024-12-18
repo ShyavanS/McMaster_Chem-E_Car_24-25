@@ -62,16 +62,18 @@ double voltage;
 double ecValue;
 
 // KALMAN FILTER variables
-double x_temp; // Filtered temperature
-double p_temp; // Initial error covariance
-// double x_MPU;  // Filtered temperature
-// double p_MPU;  // Initial error covariance
-
-// Process noise and measurement noise
-double q_temp; // Process noise covariance
-double r_temp; // Measurement noise covariance
-// double q_MPU;  // Process noise covariance
-// double r_MPU;  // Measurement noise covariance
+  //temp sensor
+double r_temp = 0.0573; //measurment noise variance  
+double q_temp = 0.01; //process noise variance -play around later to improve results
+double x_k_temp = 0; //initializing estimated status
+double p_k_temp = 0; //initializing error covariance
+double K_temp = 0; //initializing Kalman gain
+  //conductivity
+double r_cond = 0.05; //measurment noise variance -get value
+double q_cond = 0.01; //process noise variance -play around later to improve results
+double x_k_cond = 0; //initializing estimated status
+double p_k_cond = 0; //initializing error covariance
+double K_cond = 0; //initializing Kalman gain
 
 // Keeping track of time
 float currTime = 0;
@@ -152,34 +154,27 @@ void start_stir() // Start stirring mechanism
 //     right_offset = 0;
 //   }
 // }
-
-void kalman_filter(double x_k, double p_k, double q, double r, double input, bool tempTrue) // Kalman filtering algorithm
+double kalman_filter_conductivity(double input) //void kalman_filter(double x_k, double p_k, double q, double r, double input, bool tempTrue) // Kalman filtering algorithm
 {
-  // Kalman filter prediction
-  double x_k_minus = x_k;     // Predicted next state estimate
-  double p_k_minus = p_k + q; // Predicted error covariance for the next state
-
-  // Kalman filter update
-
-  /* Kalman gain: calculated based on the predicted error covariance
-  and the measurement noise covariance, used to update the
-  state estimate (x_k) and error covariance (p_k) */
-  double k = p_k_minus / (p_k_minus + r); // Kalman gain
-
-  // Comparison with actual sensor reading
-  x_k = x_k_minus + k * (input - x_k_minus); // Updated state estimate
-  p_k = (1 - k) * p_k_minus;                 // Updated error covariance
-
-  if (tempTrue) // Update state for temperature sensor or IMU accordingly
-  {
-    x_temp = x_k;
-    p_temp = p_k;
-  }
-  else
-  {
-    // x_MPU = x_k;
-    // p_MPU = p_k;
-  }
+  double x_k_cond_min1 = x_k_cond;
+  double p_k_cond_min1 = p_k_cond;
+  K_cond = p_k_cond_min1 / (p_k_cond_min1 + r_cond); //updating Kalman gain
+  //original equation is  K = p_K*H / (H*H*p_k+r) but measurment map scalar is 1)
+  x_k_cond = x_k_cond_min1 + K_cond * (input - x_k_cond_min1); //update state estimate
+  p_k_cond = (1 - K_cond) * p_k_cond_min1 + q_cond; //update error covariance
+  return x_k_cond; //filtered value
+}
+double kalman_filter_temperature(double input) //void kalman_filter(double x_k, double p_k, double q, double r, double input, bool tempTrue) // Kalman filtering algorithm
+{
+  //New:
+  double x_k_temp_min1 = x_k_temp;
+  double p_k_temp_min1 = p_k_temp;
+  K_temp = p_k_temp_min1 / (p_k_temp_min1 + r_temp); //updating Kalman gain
+  //original equation is  K = p_K*H / (H*H*p_k+r) but measurment map scalar is 1)
+  x_k_temp = x_k_temp_min1 + K_temp * (input - x_k_temp_min1); //update state estimate
+  p_k_temp = (1 - K_temp) * p_k_temp_min1 + q_temp; //update error covariance
+  
+  return x_k_temp; //filtered value
 }
 
 void setup() // Setup (executes once)
@@ -229,10 +224,10 @@ void setup() // Setup (executes once)
   // zAngle = mpu.getAngleZ(); // Get z-axis angle from MPU
 
   // Initialize Kalman filter parameters
-  x_temp = initTemp; // Initial state estimate
-  p_temp = 0.1;      // Initial error covariance
-  q_temp = 0.01;     // Process noise covariance
-  r_temp = 0.5;      // Measurement noise covariance
+  //x_temp = initTemp; // Initial state estimate
+  //p_temp = 0.1;      // Initial error covariance
+  //q_temp = 0.01;     // Process noise covariance
+  //r_temp = 0.5;      // Measurement noise covariance
   // x_MPU = zAngle;    // Initial state estimate
   // p_MPU = 1.0;       // Initial error covariance
   // q_MPU = 0.01;      // Process noise covariance
@@ -269,7 +264,8 @@ void loop() // Loop (main loop)
   // zAngle = mpu.getAngleZ(); // Get z-axis angle from MPU
 
   // Update kalman filters
-  kalman_filter(x_temp, p_temp, q_temp, r_temp, temperatureC, true);
+  //kalman_filter(x_temp, p_temp, q_temp, r_temp, temperatureC, true);
+  x_temp = kalman_filter_temp(temperatureC);
   // kalman_filter(x_MPU, p_MPU, q_MPU, r_MPU, zAngle, false);
 
   // Get time on each measurement of sensor
