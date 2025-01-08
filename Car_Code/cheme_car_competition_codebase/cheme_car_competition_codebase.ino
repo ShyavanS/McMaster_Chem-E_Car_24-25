@@ -62,10 +62,11 @@ double voltage;
 double ecValue;
 
 // KALMAN FILTER variables
+double x_temp;
   //temp sensor
 double r_temp = 0.0573; //measurment noise variance  
 double q_temp = 0.01; //process noise variance -play around later to improve results
-double x_k_temp = 0; //initializing estimated status
+double x_k_temp = initTemp; //initializing estimated status
 double p_k_temp = 0; //initializing error covariance
 double K_temp = 0; //initializing Kalman gain
   //conductivity
@@ -258,14 +259,14 @@ void loop() // Loop (main loop)
   temperatureC = sensors.getTempCByIndex(0); // Get temperature in Celsius
 
   voltage = analogRead(EC_Pin)/1024.0*5000;
-  ecValue = ec.readEC(voltage, temperatureC);
+  ecValue = ec.readEC(voltage, x_temp);
 
   // mpu.update();             // Update MPU readings
   // zAngle = mpu.getAngleZ(); // Get z-axis angle from MPU
 
   // Update kalman filters
   //kalman_filter(x_temp, p_temp, q_temp, r_temp, temperatureC, true);
-  x_temp = kalman_filter_temp(temperatureC);
+  x_temp = kalman_filter_temperature(temperatureC);
   // kalman_filter(x_MPU, p_MPU, q_MPU, r_MPU, zAngle, false);
 
   // Get time on each measurement of sensor
