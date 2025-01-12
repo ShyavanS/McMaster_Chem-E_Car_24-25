@@ -62,19 +62,18 @@ double voltage;
 double ecValue;
 
 // KALMAN FILTER variables
-double x_temp;
   //temp sensor
-double r_temp = 0.0573; //measurment noise variance  
-double q_temp = 0.01; //process noise variance -play around later to improve results
-double x_k_temp = initTemp; //initializing estimated status
-double p_k_temp = 0; //initializing error covariance
-double K_temp = 0; //initializing Kalman gain
+double r_temp; //measurment noise variance  
+double q_temp; //process noise variance -play around later to improve results
+double x_k_temp; //initializing estimated status
+double p_k_temp; //initializing error covariance
+double K_temp; //initializing Kalman gain
   //conductivity
-double r_cond = 0.05; //measurment noise variance -get value
-double q_cond = 0.01; //process noise variance -play around later to improve results
-double x_k_cond = 0; //initializing estimated status
-double p_k_cond = 0; //initializing error covariance
-double K_cond = 0; //initializing Kalman gain
+double r_cond; //measurment noise variance -get value
+double q_cond; //process noise variance -play around later to improve results
+double x_k_cond; //initializing estimated status
+double p_k_cond; //initializing error covariance
+double K_cond; //initializing Kalman gain
 
 // Keeping track of time
 float currTime = 0;
@@ -155,23 +154,22 @@ void start_stir() // Start stirring mechanism
 //     right_offset = 0;
 //   }
 // }
-double kalman_filter_conductivity(double input) //void kalman_filter(double x_k, double p_k, double q, double r, double input, bool tempTrue) // Kalman filtering algorithm
+double kalman_filter_conductivity(double input, double x_k_cond) //void kalman_filter(double x_k, double p_k, double q, double r, double input, bool tempTrue) // Kalman filtering algorithm
 {
   double x_k_cond_min1 = x_k_cond;
   double p_k_cond_min1 = p_k_cond;
   K_cond = p_k_cond_min1 / (p_k_cond_min1 + r_cond); //updating Kalman gain
-  //original equation is  K = p_K*H / (H*H*p_k+r) but measurment map scalar is 1)
+  //original equation is  K = p_K*H / (H*H*p_k+r) but measurment map scalar is 1
   x_k_cond = x_k_cond_min1 + K_cond * (input - x_k_cond_min1); //update state estimate
   p_k_cond = (1 - K_cond) * p_k_cond_min1 + q_cond; //update error covariance
   return x_k_cond; //filtered value
 }
-double kalman_filter_temperature(double input) //void kalman_filter(double x_k, double p_k, double q, double r, double input, bool tempTrue) // Kalman filtering algorithm
+double kalman_filter_temperature(double input, double x_k_temp) //void kalman_filter(double x_k, double p_k, double q, double r, double input, bool tempTrue) // Kalman filtering algorithm
 {
-  //New:
   double x_k_temp_min1 = x_k_temp;
   double p_k_temp_min1 = p_k_temp;
   K_temp = p_k_temp_min1 / (p_k_temp_min1 + r_temp); //updating Kalman gain
-  //original equation is  K = p_K*H / (H*H*p_k+r) but measurment map scalar is 1)
+  //original equation is  K = p_K*H / (H*H*p_k+r) but measurment map scalar is 1
   x_k_temp = x_k_temp_min1 + K_temp * (input - x_k_temp_min1); //update state estimate
   p_k_temp = (1 - K_temp) * p_k_temp_min1 + q_temp; //update error covariance
   
@@ -224,15 +222,20 @@ void setup() // Setup (executes once)
   // mpu.update();             // Update MPU readings
   // zAngle = mpu.getAngleZ(); // Get z-axis angle from MPU
 
-  // Initialize Kalman filter parameters
-  //x_temp = initTemp; // Initial state estimate
-  //p_temp = 0.1;      // Initial error covariance
-  //q_temp = 0.01;     // Process noise covariance
-  //r_temp = 0.5;      // Measurement noise covariance
-  // x_MPU = zAngle;    // Initial state estimate
-  // p_MPU = 1.0;       // Initial error covariance
-  // q_MPU = 0.01;      // Process noise covariance
-  // r_MPU = 0.1;       // Measurement noise covariance
+  // KALMAN FILTER variables
+    //temp sensor
+  double r_temp = 0.0573; //measurment noise variance  
+  double q_temp = 0.01; //process noise variance -play around later to improve results
+  double x_k_temp = initTemp; //initializing estimated status
+  double p_k_temp = 0; //initializing error covariance
+  double K_temp = 0; //initializing Kalman gain
+    //conductivity
+  double r_cond = 0.05; //measurment noise variance -get value
+  double q_cond = 0.01; //process noise variance -play around later to improve results
+  double x_k_cond = 0; //initializing estimated status
+  double p_k_cond = 0; //initializing error covariance
+  double K_cond = 0; //initializing Kalman gain
+
 
   // Initialize servo to default position
   servo.attach(servo_pwm, 500, 2600);
@@ -259,14 +262,13 @@ void loop() // Loop (main loop)
   temperatureC = sensors.getTempCByIndex(0); // Get temperature in Celsius
 
   voltage = analogRead(EC_Pin)/1024.0*5000;
-  ecValue = ec.readEC(voltage, x_temp);
+  ecValue = ec.readEC(voltage, x_k_temp);
 
   // mpu.update();             // Update MPU readings
   // zAngle = mpu.getAngleZ(); // Get z-axis angle from MPU
 
   // Update kalman filters
-  //kalman_filter(x_temp, p_temp, q_temp, r_temp, temperatureC, true);
-  x_temp = kalman_filter_temperature(temperatureC);
+  x_k_temp = kalman_filter_temperature(temperatureC, x_k_temp);
   // kalman_filter(x_MPU, p_MPU, q_MPU, r_MPU, zAngle, false);
 
   // Get time on each measurement of sensor
