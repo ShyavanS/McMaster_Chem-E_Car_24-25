@@ -1,6 +1,6 @@
 // Included libraries
 #include <OneWire.h>
-// #include <Wire.h>
+#include <Wire.h>
 // #include <MPU6050_light.h>
 #include <DallasTemperature.h>
 // #include "DFRobot_EC10.h"
@@ -29,6 +29,8 @@
 // #define EC_Pin A2 // Pin for conductivitiy probe
 
 // #define EC_THRESH 100
+
+#define BOOST_I2C 0x75 // This is the address when pin on converter is set to LOW
 
 Servo servo; // Create servo object
 
@@ -255,6 +257,61 @@ void setup() // Setup (executes once)
 
   // Start drive motors at full power to overcome stall
   drive_forward(0);
+
+  // This will change internal output voltage to 676.68 mV
+  // Changes LSB
+  Wire.begin(); // Begin I2C communication
+  Wire.beginTransmission(BOOST_I2C);
+  Wire.write(0x00); // Register Address
+  Wire.endTransmission();
+
+  Wire.beginTransmission(BOOST_I2C);
+  Wire.write(0x5F); // Changed LSB
+  Wire.endTransmission();
+
+  // Reads data and stores into firstByte
+  Wire.beginTransmission(BOOST_I2C);
+  Wire.write(0x01); // Register Address
+  Wire.endTransmission();
+  Wire.requestFrom(0x01, 1);
+  firstByte = Wire.read();
+
+  // Changes last 3 bits to 100
+  firstByte &= 0xFC;
+  firstByte |= 0x04;
+
+  //  Changes the MSB
+  Wire.beginTransmission(BOOST_I2C);
+  Wire.write(0x01); // Register Address
+  Wire.endTransmission();
+
+  Wire.beginTransmission(BOOST_I2C);
+  Wire.write(firstByte); // Changed MSB
+  Wire.endTransmission();
+
+
+  // This disables current limiter
+  Wire.beginTransmission(BOOST_I2C);
+  Wire.write(0x02); // Register Address
+  Wire.write(0x64); // Changed LSB
+  Wire.endTransmission();
+
+  // This enables output
+  Wire.beginTransmission(BOOST_I2C);
+  Wire.write(0x06); // Register Address
+  Wire.endTransmission();
+
+  Wire.requestFrom(0x06, 1);
+  firstByte = Wire.read();
+
+  firstByte &= 0x74;
+
+  Wire.beginTransmission(BOOST_I2C);
+  Wire.write(0x06); // Register Address
+  Wire.write(firstByte); // Changed LSB
+  Wire.endTransmission();
+
+  Wire.end();
 }
 
 void loop() // Loop (main loop)
