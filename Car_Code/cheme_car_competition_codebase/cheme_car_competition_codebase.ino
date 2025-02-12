@@ -8,6 +8,7 @@
 // #include <PID_v1_bc.h>
 #include <Servo.h>
 #include <Adafruit_NeoPixel.h>
+#include <Wire.h>
 
 #define NUM_PIXELS 1 // Status LED
 
@@ -26,9 +27,9 @@
 
 #define ONE_WIRE_BUS A1 // pin for the DS18B20 data line
 
-#define EC_Pin A2 // Pin for conductivitiy probe
-
 #define EC_THRESH 100
+
+#define BOOST_I2C 0x75
 
 Servo servo; // Create servo object
 
@@ -38,8 +39,6 @@ OneWire oneWire(ONE_WIRE_BUS);       // Create a OneWire instance to communicate
 DallasTemperature sensors(&oneWire); // Pass oneWire reference to Dallas Temperature sensor
 
 Adafruit_NeoPixel pixel(NUM_PIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800); // Status LED
-
-DFRobot_EC10 ec; // Create and instance for the conductivity probe
 
 // The target angle to keep car straight
 // double goalAngle = 0.0;
@@ -57,10 +56,6 @@ float tempChange;
 double temperatureC; // Current temperature
 double initTemp;     // Initial temperature for differential calculation
 
-// Variables for conductivity probe
-double voltage;
-double ecValue;
-
 // KALMAN FILTER variables
   //temp sensor
 double r_temp; //measurment noise variance  
@@ -68,12 +63,6 @@ double q_temp; //process noise variance -play around later to improve results
 double x_k_temp; //initializing estimated status
 double p_k_temp; //initializing error covariance
 double K_temp; //initializing Kalman gain
-  //conductivity
-double r_cond; //measurment noise variance -get value
-double q_cond; //process noise variance -play around later to improve results
-double x_k_cond; //initializing estimated status
-double p_k_cond; //initializing error covariance
-double K_cond; //initializing Kalman gain
 
 // Keeping track of time
 float currTime = 0;
@@ -154,16 +143,7 @@ void start_stir() // Start stirring mechanism
 //     right_offset = 0;
 //   }
 // }
-double kalman_filter_conductivity(double input, double x_k_cond) //void kalman_filter(double x_k, double p_k, double q, double r, double input, bool tempTrue) // Kalman filtering algorithm
-{
-  double x_k_cond_min1 = x_k_cond;
-  double p_k_cond_min1 = p_k_cond;
-  K_cond = p_k_cond_min1 / (p_k_cond_min1 + r_cond); //updating Kalman gain
-  //original equation is  K = p_K*H / (H*H*p_k+r) but measurment map scalar is 1
-  x_k_cond = x_k_cond_min1 + K_cond * (input - x_k_cond_min1); //update state estimate
-  p_k_cond = (1 - K_cond) * p_k_cond_min1 + q_cond; //update error covariance
-  return x_k_cond; //filtered value
-}
+
 double kalman_filter_temperature(double input, double x_k_temp) //void kalman_filter(double x_k, double p_k, double q, double r, double input, bool tempTrue) // Kalman filtering algorithm
 {
   double x_k_temp_min1 = x_k_temp;
@@ -174,6 +154,21 @@ double kalman_filter_temperature(double input, double x_k_temp) //void kalman_fi
   p_k_temp = (1 - K_temp) * p_k_temp_min1 + q_temp; //update error covariance
   
   return x_k_temp; //filtered value
+}
+
+check_buck_boost_converter()
+{
+  Wire.beginTransmission(TPS55289_ADDR);
+  if(((Wire.read(0x07) >> 7) & 0xFF)){
+    buck_boost_converter_short_circuit = 1;
+  }
+  if(((Wire.read(0x07) >> 6) & 0xFF)){
+    buck_boost_converter_overcurrent = 1;
+  }
+  if(((Wire.read(0x07) >> 5) & 0xFF)){
+    buck_boost_converter_overvoltage = 1;
+  }
+  return 0;
 }
 
 void setup() // Setup (executes once)
@@ -229,13 +224,11 @@ void setup() // Setup (executes once)
   double x_k_temp = initTemp; //initializing estimated status
   double p_k_temp = 0; //initializing error covariance
   double K_temp = 0; //initializing Kalman gain
-    //conductivity
-  double r_cond = 0.05; //measurment noise variance -get value
-  double q_cond = 0.01; //process noise variance -play around later to improve results
-  double x_k_cond = 0; //initializing estimated status
-  double p_k_cond = 0; //initializing error covariance
-  double K_cond = 0; //initializing Kalman gain
 
+  // Buck boost converter errors
+  bool buck_boost_converter_short_circuit = 0;
+  bool buck_boost_converter_overcurrent = 0;
+  bool buck_boost_converter_overvoltage = 0;
 
   // Initialize servo to default position
   servo.attach(servo_pwm, 500, 2600);
@@ -298,5 +291,14 @@ void loop() // Loop (main loop)
 
     while (1)
       ; // Do nothing for remainder of uptime
+  }
+  if(buck_boost_converter_short_circuit){
+    Serial.println("Buck boost converter error - short circuit"); 
+  }
+  if(buck_boost_converter_overcurrent){
+    Serial.println("Buck boost converter error - overcurrent"); 
+  }
+  if(buck_boost_converter_overvoltage){
+    Serial.println("Buck boost converter error - overvoltage"); 
   }
 }
