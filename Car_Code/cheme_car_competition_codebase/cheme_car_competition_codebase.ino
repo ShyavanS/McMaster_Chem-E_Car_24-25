@@ -260,30 +260,13 @@ void setup() // Setup (executes once)
   Wire.begin(); // Begin I2C communication
   Wire.beginTransmission(BOOST_I2C);
   Wire.write(0x00); // Register Address
-  Wire.endTransmission();
-
-  Wire.beginTransmission(BOOST_I2C);
   Wire.write(0x5F); // Changed LSB
   Wire.endTransmission();
-
-  // Reads data and stores into firstByte
-  Wire.beginTransmission(BOOST_I2C);
-  Wire.write(0x01); // Register Address
-  Wire.endTransmission();
-  Wire.requestFrom(0x01, 1);
-  firstByte = Wire.read();
-
-  // Changes last 3 bits to 100
-  firstByte &= 0xFC;
-  firstByte |= 0x04;
 
   //  Changes the MSB
   Wire.beginTransmission(BOOST_I2C);
   Wire.write(0x01); // Register Address
-  Wire.endTransmission();
-
-  Wire.beginTransmission(BOOST_I2C);
-  Wire.write(firstByte); // Changed MSB
+  Wire.write(0x04); // Changed MSB
   Wire.endTransmission();
 
 
@@ -296,16 +279,7 @@ void setup() // Setup (executes once)
   // This enables output
   Wire.beginTransmission(BOOST_I2C);
   Wire.write(0x06); // Register Address
-  Wire.endTransmission();
-
-  Wire.requestFrom(0x06, 1);
-  firstByte = Wire.read();
-
-  firstByte &= 0x74;
-
-  Wire.beginTransmission(BOOST_I2C);
-  Wire.write(0x06); // Register Address
-  Wire.write(firstByte); // Changed LSB
+  Wire.write(0xA0); // Changed LSB
   Wire.endTransmission();
 
   Wire.end();
