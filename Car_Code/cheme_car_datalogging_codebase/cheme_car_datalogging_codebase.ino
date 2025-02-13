@@ -1,9 +1,8 @@
 // Included libraries
 #include <OneWire.h>
-// #include <Wire.h>
-// #include <MPU6050_light.h>
+#include <Adafruit_BNO08x.h>
 #include <DallasTemperature.h>
-// #include <PID_v1_bc.h>
+#include <PID_v1_bc.h>
 #include <Servo.h>
 #include <Adafruit_NeoPixel.h>
 #include "SdFat.h"
@@ -31,11 +30,21 @@
 // Define chip select pin for SD card
 #define SD_CS_PIN 23
 
+// Struct for Euler Angles
+struct euler_t
+{
+  float yaw;
+  float pitch;
+  float roll;
+} ypr;
+
 // Create servo objects
 Servo brak_servo;
 Servo prop_servo;
 
-// MPU6050 mpu(Wire); // Create MPU6050 instance
+// Create BNO085 instance
+Adafruit_BNO08x bno08x(BNO08X_RESET);
+sh2_SensorValue_t sensor_value;
 
 OneWire one_wire(BRAK_TEMP_SENS);          // Create a OneWire instance to communicate with the sensor
 DallasTemperature temp_sensors(&one_wire); // Pass OneWire reference to Dallas Temperature sensor
@@ -53,10 +62,12 @@ String file_name;
 bool is_file_new = true; // Checks for new file
 
 // The target angle to keep car straight
-// double goal_angle = 0.0;
+double goal_angle = 0.0;
 
-// Define accelerometer variables
-// double z_angle; // z-axis angle
+// Define IMU variables
+double z_angle;          // z-axis angle
+double init_angle = 0.0; // initial angle
+double angle_diff = 0.0; // z-axis difference
 
 // Temperature threshold
 float temp_diff;
@@ -92,31 +103,31 @@ int data_size = 2;      // Number of items to log
 double data[data_size]; // Data array
 
 // PID Loop variables
-// double pid_output; // The output correction from the PID algorithm
+double pid_output; // The output correction from the PID algorithm
 
 // The following numbers need to be adjusted through testing
-// double k_p = 1; // Proportional weighting
-// double k_i = 0; // Integral weighting
-// double k_d = 0; // Derivative weighting
+double k_p = 1.5;  // Proportional weighting
+double k_i = 0.03; // Integral weighting
+double k_d = 0.3;  // Derivative weighting
 
-// Offset speeds for left and right wheel
-// int left_offset = 0;
-// int right_offset = 0;
+// Offsets & speeds for left and right wheel
+int left_offset = 0;
+int right_offset = 0;
+int drive_speed = 128;
+int max_offset;
 
 // PID control object; input, output, and goal angle are passed by pointer.
-// PID car_pid(&x_MPU, &pid_output, &goal_angle, k_p, k_i, k_d, DIRECT);
+PID car_pid(&x_MPU, &pid_output, &goal_angle, k_p, k_i, k_d, DIRECT);
 
 void drive_forward(int speed) // Drive function
 {
   // Left wheel
   digitalWrite(LEFT_PWM_1, HIGH);
-  analogWrite(LEFT_PWM_2, speed);
-  // analogWrite(LEFT_PWM_2, speed - right_offset);
+  analogWrite(LEFT_PWM_2, speed - right_offset);
 
   // Right wheel
   digitalWrite(RIGHT_PWM_2, HIGH);
-  analogWrite(RIGHT_PWM_1, speed);
-  // analogWrite(RIGHT_PWM_1, speed - left_offset);
+  analogWrite(RIGHT_PWM_1, speed - left_offset);
 }
 
 void stop_driving() // Stop function
@@ -145,26 +156,26 @@ void start_stir(int stir_pin_1, int stir_pin_2, int speed) // Start stirring mec
   analogWrite(stir_pin_2, speed); // Set motor to speed obtained through testing
 }
 
-// void PID_loop() // Update motor speeds according to PID algorithm
-// {
-//   car_pid.Compute(); // Run compute algorithm and updates pid_output
+void PID_loop() // Update motor speeds according to PID algorithm
+{
+  car_pid.Compute(); // Run compute algorithm and updates pid_output
 
-//   if (pid_output > 0)
-//   {
-//     left_offset = abs(round(pid_output)); // If output needs to be adjusted in positive dir (to the right), increase left wheel speed
-//     right_offset = 0;                    // Zero other wheel offset to prevent instability
-//   }
-//   else if (pid_output < 0)
-//   {
-//     right_offset = abs(round(pid_output)); // If output needs to be adjusted in negative dir (to the left), increase right wheel speed
-//     left_offset = 0;                      // Zero other wheel offset to prevent instability
-//   }
-//   else
-//   {
-//     left_offset = 0;
-//     right_offset = 0;
-//   }
-// }
+  if (pid_output < 0)
+  {
+    left_offset = abs(round(pid_output)); // If output needs to be adjusted in positive dir (to the right), increase left wheel speed
+    right_offset = round(pid_output);     // and decrease right wheel speed.
+  }
+  else if (pid_output > 0)
+  {
+    right_offset = abs(round(pid_output)); // If output needs to be adjusted in negative dir (to the left), increase right wheel speed
+    left_offset = -round(pid_output);      // and decrease left wheel speed.
+  }
+  else // Otherwise set both speed offsets to zero if output does not need adjustment.
+  {
+    left_offset = 0;
+    right_offset = 0;
+  }
+}
 
 void kalman_filter(double x_k, double p_k, double q, double r, double input, bool tempTrue) // Kalman filtering algorithm
 {
@@ -221,6 +232,43 @@ void printer(bool serial_true, unsigned long millis_time, double outputs[data_si
 
     data_file.println("");
   }
+}
+
+// Enable reports for IMU
+void setReports(void)
+{
+  Serial.println("Setting desired reports");
+  if (!bno08x.enableReport(SH2_ARVR_STABILIZED_RV))
+  {
+    Serial.println("Could not enable rotation vector");
+  }
+}
+
+// Convert Quaternion to Euler Angles to get yaw
+void quaternionToEuler(float qr, float qi, float qj, float qk, euler_t *ypr, bool degrees = false)
+{
+
+  float sqr = sq(qr);
+  float sqi = sq(qi);
+  float sqj = sq(qj);
+  float sqk = sq(qk);
+
+  ypr->yaw = atan2(2.0 * (qi * qj + qk * qr), (sqi - sqj - sqk + sqr));
+  ypr->pitch = asin(-2.0 * (qi * qk - qj * qr) / (sqi + sqj + sqk + sqr));
+  ypr->roll = atan2(2.0 * (qj * qk + qi * qr), (-sqi - sqj + sqk + sqr));
+
+  if (degrees)
+  {
+    ypr->yaw *= RAD_TO_DEG;
+    ypr->pitch *= RAD_TO_DEG;
+    ypr->roll *= RAD_TO_DEG;
+  }
+}
+
+// Pointer function
+void quaternionToEulerRV(sh2_RotationVectorWAcc_t *rotational_vector, euler_t *ypr, bool degrees = false)
+{
+  quaternionToEuler(rotational_vector->real, rotational_vector->i, rotational_vector->j, rotational_vector->k, ypr, degrees);
 }
 
 void setup() // Setup (executes once)
@@ -282,11 +330,21 @@ void setup() // Setup (executes once)
   temp_sensors.requestTemperatures();          // Request temperature from all devices on the bus
   init_temp = temp_sensors.getTempCByIndex(0); // Get temperature in Celsius
 
-  // Wire.begin();             // Initialize I2C communication
-  // mpu.begin();              // Initialize MPU6050
-  // mpu.calcOffsets();        // Zero yaw angle
-  // mpu.update();             // Update MPU readings
-  // z_angle = mpu.getAngleZ(); // Get z-axis angle from MPU
+  bno08x.begin_I2C();
+  setReports();
+
+  // Poll IMU a few times & wait for initialization value to stabilize
+  for (int i = 0; i < 5; i++)
+  {
+    bno08x.getSensorEvent(&sensor_value);
+    quaternionToEulerRV(&sensor_value.un.arvrStabilizedRV, &ypr, true);
+
+    init_angle = ypr.yaw;
+    z_angle = ypr.yaw;
+    angle_diff = z_angle - init_angle;
+
+    delay(200);
+  }
 
   // Initialize Kalman filter parameters
   x_temp = init_temp; // Initial state estimate
@@ -306,11 +364,21 @@ void setup() // Setup (executes once)
   servo_dump(prop_servo, 2500, 1000);
   servo_dump(brak_servo, 1500, 6000);
 
+  // Set max speed offset according to drive speed
+  if (drive_speed < 128)
+  {
+    max_offset = drive_speed;
+  }
+  else
+  {
+    max_offset = 255 - drive_speed;
+  }
+
   // Activate PID
-  // car_pid.SetMode(AUTOMATIC);
+  car_pid.SetMode(AUTOMATIC);
 
   // The pid outputs between -51 to 51 depending on how the motors should be adjusted. An output of 0 means no change. (This should be adjusted through testing).
-  // car_pid.SetOutputLimits(-51, 51);
+  car_pid.SetOutputLimits(-max_offset, max_offset);
 
   pixel.setPixelColor(0, 0, 0, 255); // Indicate setup complete status
   pixel.show();
@@ -321,16 +389,6 @@ void setup() // Setup (executes once)
 
 void loop() // Loop (main loop)
 {
-  temp_sensors.requestTemperatures();              // Request temperature from all devices on the bus
-  temperature_c = temp_sensors.getTempCByIndex(0); // Get temperature in Celsius
-
-  // mpu.update();             // Update MPU readings
-  // z_angle = mpu.getAngleZ(); // Get z-axis angle from MPU
-
-  // Update kalman filters
-  kalman_filter(x_temp, p_temp, q_temp, r_temp, temperature_c, true);
-  // kalman_filter(x_MPU, p_MPU, q_MPU, r_MPU, z_angle, false);
-
   // Get time on each measurement of sensor
   if (first_run)
   {
@@ -342,6 +400,19 @@ void loop() // Loop (main loop)
   {
     curr_time = (millis() - start_time) / 1000; // Taken to check time against first measurement
   }
+
+  temp_sensors.requestTemperatures();              // Request temperature from all devices on the bus
+  temperature_c = temp_sensors.getTempCByIndex(0); // Get temperature in Celsius
+
+  bno08x.getSensorEvent(&sensor_value);
+  quaternionToEulerRV(&sensor_value.un.arvrStabilizedRV, &ypr, true);
+
+  z_angle = ypr.yaw;
+  angle_diff = z_angle - init_angle;
+
+  // Update kalman filters
+  kalman_filter(x_temp, p_temp, q_temp, r_temp, temperature_c, true);
+  // kalman_filter(x_MPU, p_MPU, q_MPU, r_MPU, z_angle, false);
 
   // Open csv file
   file_name = "Run_" + String(run_count) + ".csv";
@@ -359,7 +430,7 @@ void loop() // Loop (main loop)
     // Update data array
     data[0] = temperature_c;
     data[1] = x_temp;
-    // data[2] = z_angle;
+    data[2] = angle_diff;
     // data[3] = x_MPU;
 
     // Write variable data to the file in CSV format
@@ -374,7 +445,7 @@ void loop() // Loop (main loop)
   drive_forward(128); // 50% speed in slow decay mode
 
   // // Update PID model
-  // PID_loop();
+  PID_loop();
 
   if (temp_change >= temp_diff)
   {
