@@ -1,6 +1,8 @@
 // Included libraries
 #include <OneWire.h>
 #include <Adafruit_BNO08x.h>
+#include <Wire.h>
+// #include <MPU6050_light.h>
 #include <DallasTemperature.h>
 #include <PID_v1_bc.h>
 #include <Servo.h>
@@ -37,6 +39,8 @@ struct euler_t
   float pitch;
   float roll;
 } ypr;
+
+#define BOOST_I2C 0x75 // This is the address when pin on converter is set to LOW
 
 // Create servo objects
 Servo brak_servo;
@@ -273,6 +277,35 @@ void quaternionToEulerRV(sh2_RotationVectorWAcc_t *rotational_vector, euler_t *y
 
 void setup() // Setup (executes once)
 {
+  // This will change internal output voltage to 676.68 mV
+  // Changes LSB
+  Wire.begin(); // Begin I2C communication
+  Wire.beginTransmission(BOOST_I2C);
+  Wire.write(0x00); // Register Address
+  Wire.write(0x5F); // Changed LSB
+  Wire.endTransmission();
+
+  //  Changes the MSB
+  Wire.beginTransmission(BOOST_I2C);
+  Wire.write(0x01); // Register Address
+  Wire.write(0x04); // Changed MSB
+  Wire.endTransmission();
+
+
+  // This disables current limiter
+  Wire.beginTransmission(BOOST_I2C);
+  Wire.write(0x02); // Register Address
+  Wire.write(0x64); // Changed LSB
+  Wire.endTransmission();
+
+  // This enables output
+  Wire.beginTransmission(BOOST_I2C);
+  Wire.write(0x06); // Register Address
+  Wire.write(0xA0); // Changed LSB
+  Wire.endTransmission();
+
+  Wire.end();
+
   // Indicate status to be initialized
   pixel.begin();
   pixel.setBrightness(255);
