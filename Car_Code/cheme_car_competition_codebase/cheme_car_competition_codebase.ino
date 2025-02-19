@@ -183,6 +183,35 @@ void kalman_filter(double x_k, double p_k, double q, double r, double input, boo
 
 void setup() // Setup (executes once)
 {
+  // This will change internal output voltage to 676.68 mV
+  // Changes LSB
+  Wire.begin(); // Begin I2C communication
+  Wire.beginTransmission(BOOST_I2C);
+  Wire.write(0x00); // Register Address
+  Wire.write(0x5F); // Changed LSB
+  Wire.endTransmission();
+
+  //  Changes the MSB
+  Wire.beginTransmission(BOOST_I2C);
+  Wire.write(0x01); // Register Address
+  Wire.write(0x04); // Changed MSB
+  Wire.endTransmission();
+
+
+  // This disables current limiter
+  Wire.beginTransmission(BOOST_I2C);
+  Wire.write(0x02); // Register Address
+  Wire.write(0x64); // Changed LSB
+  Wire.endTransmission();
+
+  // This enables output
+  Wire.beginTransmission(BOOST_I2C);
+  Wire.write(0x06); // Register Address
+  Wire.write(0xA0); // Changed LSB
+  Wire.endTransmission();
+
+  Wire.end();
+
   // Indicate status to be initialized
   pixel.begin();
   pixel.setBrightness(255);
@@ -254,35 +283,6 @@ void setup() // Setup (executes once)
 
   // Start drive motors at full power to overcome stall
   drive_forward(0);
-
-  // This will change internal output voltage to 676.68 mV
-  // Changes LSB
-  Wire.begin(); // Begin I2C communication
-  Wire.beginTransmission(BOOST_I2C);
-  Wire.write(0x00); // Register Address
-  Wire.write(0x5F); // Changed LSB
-  Wire.endTransmission();
-
-  //  Changes the MSB
-  Wire.beginTransmission(BOOST_I2C);
-  Wire.write(0x01); // Register Address
-  Wire.write(0x04); // Changed MSB
-  Wire.endTransmission();
-
-
-  // This disables current limiter
-  Wire.beginTransmission(BOOST_I2C);
-  Wire.write(0x02); // Register Address
-  Wire.write(0x64); // Changed LSB
-  Wire.endTransmission();
-
-  // This enables output
-  Wire.beginTransmission(BOOST_I2C);
-  Wire.write(0x06); // Register Address
-  Wire.write(0xA0); // Changed LSB
-  Wire.endTransmission();
-
-  Wire.end();
 }
 
 void loop() // Loop (main loop)
