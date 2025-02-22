@@ -83,6 +83,11 @@ double x_k_temp; //initializing estimated status
 double p_k_temp; //initializing error covariance
 double K_temp; //initializing Kalman gain
 
+// Buck boost converter errors
+bool buck_boost_converter_short_circuit;
+bool buck_boost_converter_overcurrent;
+bool buck_boost_converter_overvoltage;
+
 // Keeping track of time
 float currTime = 0;
 unsigned long startTime;
@@ -177,7 +182,7 @@ double kalman_filter_temperature(double input, double x_k_temp) //void kalman_fi
 
 check_buck_boost_converter()
 {
-  Wire.beginTransmission(TPS55289_ADDR);
+  Wire.beginTransmission(BOOST_I2C);
   if(((Wire.read(0x07) >> 7) & 0xFF)){
     buck_boost_converter_short_circuit = 1;
   }

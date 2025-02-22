@@ -8,7 +8,6 @@
 // #include <PID_v1_bc.h>
 #include <Servo.h>
 #include <Adafruit_NeoPixel.h>
-#include <Wire.h>
 
 #define NUM_PIXELS 1 // Status LED
 
@@ -28,8 +27,6 @@
 #define ONE_WIRE_BUS A1 // pin for the DS18B20 data line
 
 #define EC_THRESH 100
-
-#define BOOST_I2C 0x75
 
 Servo servo; // Create servo object
 
@@ -156,21 +153,6 @@ double kalman_filter_temperature(double input, double x_k_temp) //void kalman_fi
   return x_k_temp; //filtered value
 }
 
-check_buck_boost_converter()
-{
-  Wire.beginTransmission(TPS55289_ADDR);
-  if(((Wire.read(0x07) >> 7) & 0xFF)){
-    buck_boost_converter_short_circuit = 1;
-  }
-  if(((Wire.read(0x07) >> 6) & 0xFF)){
-    buck_boost_converter_overcurrent = 1;
-  }
-  if(((Wire.read(0x07) >> 5) & 0xFF)){
-    buck_boost_converter_overvoltage = 1;
-  }
-  return 0;
-}
-
 void setup() // Setup (executes once)
 {
   // Tie pin 4 to GND for compatibility
@@ -224,11 +206,6 @@ void setup() // Setup (executes once)
   double x_k_temp = initTemp; //initializing estimated status
   double p_k_temp = 0; //initializing error covariance
   double K_temp = 0; //initializing Kalman gain
-
-  // Buck boost converter errors
-  bool buck_boost_converter_short_circuit = 0;
-  bool buck_boost_converter_overcurrent = 0;
-  bool buck_boost_converter_overvoltage = 0;
 
   // Initialize servo to default position
   servo.attach(servo_pwm, 500, 2600);
@@ -291,14 +268,5 @@ void loop() // Loop (main loop)
 
     while (1)
       ; // Do nothing for remainder of uptime
-  }
-  if(buck_boost_converter_short_circuit){
-    Serial.println("Buck boost converter error - short circuit"); 
-  }
-  if(buck_boost_converter_overcurrent){
-    Serial.println("Buck boost converter error - overcurrent"); 
-  }
-  if(buck_boost_converter_overvoltage){
-    Serial.println("Buck boost converter error - overvoltage"); 
   }
 }
