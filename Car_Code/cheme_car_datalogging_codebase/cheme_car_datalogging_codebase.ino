@@ -115,6 +115,14 @@ double pid_output; // The output correction from the PID algorithm
 double k_p = 1.5;  // Proportional weighting
 double k_i = 0.03; // Integral weighting
 double k_d = 0.3;  // Derivative weighting
+double desired_yaw = 0;
+//double ep = 0;
+//double ei = 0;
+//double ed = 0;
+
+double prev_error = 0.0; //Previous error for derivative calculation
+double integral = 0.0; // Integral accumulator
+unsigned long = prev_time = 0; //Previous time for time delta calculation
 
 // Offsets & speeds for left and right wheel
 int left_offset = 0;
@@ -122,6 +130,85 @@ int right_offset = 0;
 int drive_speed = 128;
 int max_offset;
 
+void setup_manual_PID(){
+  // Initialize the PID variables
+  prev_error = 0.0;
+  integral = 0.0;
+  prev_time = millis();
+
+ // Set max speed offset according to drive speed
+  if (drive_speed < 128)
+  {
+    max_offset = drive_speed;
+  }
+  else
+  {
+    max_offset = 255 - drive_speed;
+  }
+  
+}
+
+
+void manual_PID_loop(){
+  //Get current time
+  unsigned long current_time = millis();
+  double sample_time = (current_time - prev_time) / 1000.0; //convert to seconds
+
+  // Incase sample time is too small (divide by zero error)
+  if (sample_time <= 0.001){
+    sample_time = 0.001;
+  }
+
+  //Calculate proportional error 
+  double error = desired_yaw - (yaw_diff)
+
+  //Calculate proportional term
+  double P = kp*error;
+
+  //Calculate integral term with cubic root
+  double error_cbrt = 0.0;
+  if (error >= 0) {
+    error_cbrt = pow(error, 1.0/3.0);
+  } else {
+    error_cbrt = -pow(-error, 1.0/3.0); //handle negative error
+  }
+  
+
+  // Add to integral accumulator
+  integral += error_cbrt*sample_time;
+
+  //Calculate integral term
+  double I = ki*integral;
+
+  //Calculate derivative term
+  double derivative = (error - prev_error)/sample_time;
+
+  //Calculate derivative component
+  D = kd*derivative;
+
+  //Calculate total PID outpu
+  double pid_output = P + I + D;
+
+  //Constrain the output to the maximum allowable offset
+  pid_output = constrain(pid_output, -max_offset, max_offset);
+
+  // Apply PID output to wheel speeds
+  id (pid_output < 0){
+    left_offset = abs(round(pid_output)); // increase left wheel speed
+    right_offset = round(pid_output); // decrease right wheel speed
+  } else if (pid_output > 0){
+    right_offset = abs(round(pid_output)); // increase right wheel speed
+    left_offset = -round(pid_output); // decrease left wheel speed
+  } else{
+    left_offset = 0;  //No adjustment needed
+    right_offset = 0;   //No adjustment needed
+  }
+
+  //Save current values for next interation
+  prev_error = error;
+  prev_time = current_time;  
+
+}
 // PID control object; input, output, and goal angle are passed by pointer.
 PID car_pid(&yaw_diff, &pid_output, &goal_yaw, k_p, k_i, k_d, DIRECT);
 
@@ -457,6 +544,7 @@ void setup(void) // Setup (executes once)
   servo_dump(prop_servo, 2500, 1000);
   servo_dump(brak_servo, 1500, 6000);
 
+/*
   // Set max speed offset according to drive speed
   if (drive_speed < 128)
   {
@@ -465,7 +553,7 @@ void setup(void) // Setup (executes once)
   else
   {
     max_offset = 255 - drive_speed;
-  }
+  }*/
 
   // Activate PID
   car_pid.SetMode(AUTOMATIC);
