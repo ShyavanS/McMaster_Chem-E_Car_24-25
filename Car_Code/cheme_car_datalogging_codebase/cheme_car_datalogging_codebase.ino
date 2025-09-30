@@ -109,18 +109,19 @@ double init_temp;     // Initial temperature for differential calculation
 // KALMAN FILTER variables
 double x_temp; // Filtered temperature
 double p_temp; // Initial error covariance
-double x_IMU;  // Filtered temperature
-double p_IMU;  // Initial error covariance
+double x_imu;  // Filtered temperature
+double p_imu;  // Initial error covariance
 
 // Process noise and measurement noise
 double q_temp; // Process noise covariance
 double r_temp; // Measurement noise covariance
-double q_IMU;  // Process noise covariance
-double r_IMU;  // Measurement noise covariance
+double q_imu;  // Process noise covariance
+double r_imu;  // Measurement noise covariance
 
 // Keeping track of time
 double curr_time = 0.0f;
 double prev_time = 0.0f;
+unsigned long last_fetch;
 unsigned long start_time;
 
 const int DATA_SIZE = 9; // Number of items to log
@@ -204,8 +205,8 @@ void kalman_filter(double x_k, double p_k, double q, double r, double input, boo
   }
   else
   {
-    x_IMU = x_k;
-    p_IMU = p_k;
+    x_imu = x_k;
+    p_imu = p_k;
   }
 }
 
@@ -288,16 +289,26 @@ void pid_loop(void) // Update steering angle according to PID algorithm
   yaw = ypr.yaw;
   yaw_diff = yaw - init_yaw + 0.05; // Constant offset for startup vibrations
 
-  kalman_filter(x_IMU, p_IMU, q_IMU, r_IMU, yaw_diff, false); // Kalman filtering for IMU data
+  kalman_filter(x_imu, p_imu, q_imu, r_imu, yaw_diff, false); // Kalman filtering for IMU data
 
   // Update errors
   last_error = error;
-  error = GOAL_YAW - x_IMU;
+  error = GOAL_YAW - x_imu;
   sum_error = sum_error + pow(error, 1 / 3);
 
   // Write to servos
   left_servo.writeMicroseconds(SERVO_ANGLE - adj_pid_output);
   right_servo.writeMicroseconds(SERVO_ANGLE - adj_pid_output);
+}
+
+void fetch_temp(void)
+{
+  temperature_c = temp_sensors.getTempCByIndex(0); // Get temperature in Celsius
+
+  // Update temperature kalman filter
+  kalman_filter(x_temp, p_temp, q_temp, r_temp, temperature_c, true);
+
+  temp_diff = x_temp - init_temp; // Update delta temperature
 }
 
 void setup(void) // Setup (executes once)
@@ -355,8 +366,11 @@ void setup(void) // Setup (executes once)
   start_stir(PROP_STIR_PWM_1, PROP_STIR_PWM_2, 255);
 
   temp_sensors.begin();                        // Initialize the DS18B20 sensor
+  temp_sensors.setResolution(11);              // Reduce resolution for faster polling
   temp_sensors.requestTemperatures();          // Request temperature from all devices on the bus
   init_temp = temp_sensors.getTempCByIndex(0); // Get temperature in Celsius
+  last_fetch = micros();                       // Time interval to poll sensor
+  temp_diff = 0.0;                             // Initialize delta temperature to zero
 
   bno08x.begin_I2C();
   set_reports();
@@ -379,10 +393,10 @@ void setup(void) // Setup (executes once)
   p_temp = 0.1;       // Initial error covariance
   q_temp = 0.01;      // Process noise covariance
   r_temp = 0.5;       // Measurement noise covariance
-  x_IMU = yaw_diff;   // Initial state estimate
-  p_IMU = 0.007;      // Initial error covariance
-  q_IMU = 0.005;      // Process noise covariance
-  r_IMU = 0.01;       // Measurement noise covariance
+  x_imu = yaw_diff;   // Initial state estimate
+  p_imu = 0.007;      // Initial error covariance
+  q_imu = 0.005;      // Process noise covariance
+  r_imu = 0.01;       // Measurement noise covariance
 
   // Initialize servos to default position
   prop_servo.writeMicroseconds(450);
@@ -435,18 +449,21 @@ void loop(void) // Loop (main loop)
 
   prev_time = curr_time;
 
-  temp_sensors.requestTemperatures();              // Request temperature from all devices on the bus
-  temperature_c = temp_sensors.getTempCByIndex(0); // Get temperature in Celsius
+  // Only poll if it has been more than 0.5 s
+  if ((curr_time - last_fetch) > 500000)
+  {
+    temp_sensors.requestTemperatures(); // Request temperature from all devices on the bus
+
+    last_fetch = micros(); // Time interval to poll sensor
+  }
+  else if (temp_sensors.isConversionComplete())
+  {
+    fetch_temp(); // Fetch temperature after conversion, otherwise continue loop
+  }
 
   curr_time = (micros() - start_time) / 1000000.0f; // Taken to check time against first measurement
 
   pid_loop(); // Run PID controller
-
-  // Update temperature kalman filter
-  kalman_filter(x_temp, p_temp, q_temp, r_temp, temperature_c, true);
-
-  temp_diff = x_temp - init_temp;
-  temp_change = double(0.185) * curr_time - 4.5f; // Calculate temperature change
 
   dist_left_m = -left_drive.read() / PPR * WHEEL_CIRCUMFERENCE_M;
   dist_right_m = right_drive.read() / PPR * WHEEL_CIRCUMFERENCE_M;
@@ -458,30 +475,32 @@ void loop(void) // Loop (main loop)
   data[3] = temp_change;
   data[4] = yaw;
   data[5] = yaw_diff;
-  data[6] = x_IMU;
+  data[6] = x_imu;
   data[7] = dist_left_m;
   data[8] = dist_right_m;
 
   // Open csv file
-  // file_name = "Run_" + String(run_count) + ".csv";
-  // data_file = sd.open(file_name, FILE_WRITE);
+  file_name = "Run_" + String(run_count) + ".csv";
+  data_file = sd.open(file_name, FILE_WRITE);
 
-  // // Write to csv file
-  // if (data_file)
-  // {
-  //   // Write file header
-  //   if (is_file_new)
-  //   {
-  //     data_file.println("Time (s),Raw Temperature (deg C),Filtered Temperature (deg C),Delta T (deg C),Temperature Line (deg C),Raw Yaw Angle (deg),Delta Yaw Angle (deg),Filtered Yaw Angle (deg),Left Wheel Distance (m),Right Wheel Distance (m)");
-  //     is_file_new = false;
-  //   }
+  // Write to csv file
+  if (data_file)
+  {
+    // Write file header
+    if (is_file_new)
+    {
+      data_file.println("Time (s),Raw Temperature (deg C),Filtered Temperature (deg C),Delta T (deg C),Temperature Line (deg C),Raw Yaw Angle (deg),Delta Yaw Angle (deg),Filtered Yaw Angle (deg),Left Wheel Distance (m),Right Wheel Distance (m)");
+      is_file_new = false;
+    }
 
-  //   printer(false, curr_time, data); // Write variable data to the file in CSV format
+    printer(false, curr_time, data); // Write variable data to the file in CSV format
 
-  //   data_file.close();
-  // }
+    data_file.close();
+  }
 
-  // printer(true, curr_time, data); // Write variable data to serial in CSV format
+  printer(true, curr_time, data); // Write variable data to serial in CSV format
+
+  temp_change = 0.185f * curr_time - 4.5f; // Calculate temperature change
 
   // if (temp_diff <= temp_change)
   // {
