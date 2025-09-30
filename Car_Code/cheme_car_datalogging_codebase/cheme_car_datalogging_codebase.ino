@@ -99,6 +99,9 @@ double temp_diff;
 // Temperature change threshold
 double temp_change;
 
+// Last temperature fetched flag
+bool last_fetch;
+
 // Initialize run count for SD card file
 int run_count;
 
@@ -121,7 +124,6 @@ double r_imu;  // Measurement noise covariance
 // Keeping track of time
 double curr_time = 0.0f;
 double prev_time = 0.0f;
-unsigned long last_fetch;
 unsigned long start_time;
 
 const int DATA_SIZE = 9; // Number of items to log
@@ -144,7 +146,7 @@ const int SERVO_ANGLE = 1475;
 const int MAX_OFFSET = 1024;
 const int YAW_REF = 90;
 
-void drive_forward(int speed) // Drive function
+void drive_forward(void) // Drive function
 {
   digitalWrite(LEFT_PWM_1, HIGH);
   digitalWrite(RIGHT_PWM_2, HIGH);
@@ -309,6 +311,7 @@ void fetch_temp(void)
   kalman_filter(x_temp, p_temp, q_temp, r_temp, temperature_c, true);
 
   temp_diff = x_temp - init_temp; // Update delta temperature
+  last_fetch = true;              // Raise fetch flag to signal ready
 }
 
 void setup(void) // Setup (executes once)
@@ -369,7 +372,7 @@ void setup(void) // Setup (executes once)
   temp_sensors.setResolution(11);              // Reduce resolution for faster polling
   temp_sensors.requestTemperatures();          // Request temperature from all devices on the bus
   init_temp = temp_sensors.getTempCByIndex(0); // Get temperature in Celsius
-  last_fetch = micros();                       // Time interval to poll sensor
+  last_fetch = true;                           // Raise fetch flag to signal ready
   temp_diff = 0.0;                             // Initialize delta temperature to zero
 
   bno08x.begin_I2C();
@@ -445,16 +448,16 @@ void setup(void) // Setup (executes once)
 
 void loop(void) // Loop (main loop)
 {
-  drive_forward(0); // 100% speed in slow decay mode
+  drive_forward(); // Start drive
 
   prev_time = curr_time;
 
-  // Only poll if it has been more than 0.5 s
-  if ((curr_time - last_fetch) > 500000)
+  // Only poll if flag indicates ready state
+  if (last_fetch)
   {
     temp_sensors.requestTemperatures(); // Request temperature from all devices on the bus
 
-    last_fetch = micros(); // Time interval to poll sensor
+    last_fetch = false; // System is no longer ready, lower flag
   }
   else if (temp_sensors.isConversionComplete())
   {
