@@ -368,9 +368,11 @@ void setup(void) // Setup (executes once)
   start_stir(BRAK_STIR_PWM_1, BRAK_STIR_PWM_2, 255);
   start_stir(PROP_STIR_PWM_1, PROP_STIR_PWM_2, 255);
 
-  temp_sensors.begin();                        // Initialize the DS18B20 sensor
-  temp_sensors.setResolution(11);              // Reduce resolution for faster polling
-  temp_sensors.requestTemperatures();          // Request temperature from all devices on the bus
+  temp_sensors.begin();                     // Initialize the DS18B20 sensor
+  temp_sensors.setResolution(11);           // Reduce resolution for faster polling
+  temp_sensors.requestTemperatures();       // Request temperature from all devices on the bus
+  temp_sensors.setWaitForConversion(false); // Disable blocking to allow multitasking
+
   init_temp = temp_sensors.getTempCByIndex(0); // Get temperature in Celsius
   last_fetch = true;                           // Raise fetch flag to signal ready
   temp_diff = 0.0;                             // Initialize delta temperature to zero
