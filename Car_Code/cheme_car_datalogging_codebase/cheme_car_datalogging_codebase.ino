@@ -78,7 +78,7 @@ String file_name;
 bool is_file_new = true; // Checks for new file
 
 // The target yaw angle to keep car straight
-double goal_yaw = 0.0;
+const float GOAL_YAW = 0.0;
 
 // Define IMU variables
 double yaw;            // yaw angle
@@ -132,9 +132,9 @@ double last_error = 0.0;
 double sum_error = 0.0;
 
 // The following numbers need to be adjusted through testing
-double k_p = 10.0; // Proportional weighting
-double k_i = 0.0;  // Integral weighting
-double k_d = 0.0;  // Derivative weighting
+const float K_P = 1.0; // Proportional weighting
+const float K_I = 0.0; // Integral weighting
+const float K_D = 0.0; // Derivative weighting
 
 // Offsets & constants for PID
 int left_offset = 0;
@@ -178,32 +178,6 @@ void start_stir(int stir_pin_1, int stir_pin_2, int speed) // Start stirring mec
 {
   digitalWrite(stir_pin_1, LOW);  // For fast decay
   analogWrite(stir_pin_2, speed); // Set motor to speed obtained through testing
-}
-
-void pid_loop(void) // Update steering angle according to PID algorithm
-{
-  // Generate output of controller based on constants & errors
-  double pid_output = (error * k_p + sum_error * k_i + (error - last_error) / (curr_time - prev_time) * k_d) / YAW_REF * MAX_OFFSET;
-  int adj_pid_output = max(min(round(pid_output), -MAX_OFFSET), MAX_OFFSET); // Clamp output to bounds
-
-  // Get IMU reading to update error values
-  bno08x.getSensorEvent(&sensor_value);
-  quaternion_to_euler_RV(&sensor_value.un.rotationVector, &ypr, true);
-
-  // Process yaw angle
-  yaw = ypr.yaw;
-  yaw_diff = yaw - init_yaw + 0.05; // Constant offset for startup vibrations
-
-  kalman_filter(x_IMU, p_IMU, q_IMU, r_IMU, yaw_diff, false); // Kalman filtering for IMU data
-
-  // Update errors
-  last_error = error;
-  error = goal_yaw - x_IMU;
-  sum_error = sum_error + pow(error, 1 / 3);
-
-  // Write to servos
-  left_servo.writeMicroseconds(SERVO_ANGLE + adj_pid_output);
-  right_servo.writeMicroseconds(SERVO_ANGLE + adj_pid_output);
 }
 
 void kalman_filter(double x_k, double p_k, double q, double r, double input, bool tempTrue) // Kalman filtering algorithm
@@ -298,6 +272,32 @@ void quaternion_to_euler(float qr, float qi, float qj, float qk, euler_t *ypr, b
 void quaternion_to_euler_RV(sh2_RotationVectorWAcc_t *rotational_vector, euler_t *ypr, bool degrees = false)
 {
   quaternion_to_euler(rotational_vector->real, rotational_vector->i, rotational_vector->j, rotational_vector->k, ypr, degrees);
+}
+
+void pid_loop(void) // Update steering angle according to PID algorithm
+{
+  // Generate output of controller based on constants & errors
+  double pid_output = (error * K_P + sum_error * K_I + (error - last_error) / (curr_time - prev_time) * K_D) / YAW_REF * MAX_OFFSET;
+  int adj_pid_output = max(min(round(pid_output), MAX_OFFSET), -MAX_OFFSET); // Clamp output to bounds
+
+  // Get IMU reading to update error values
+  bno08x.getSensorEvent(&sensor_value);
+  quaternion_to_euler_RV(&sensor_value.un.rotationVector, &ypr, true);
+
+  // Process yaw angle
+  yaw = ypr.yaw;
+  yaw_diff = yaw - init_yaw + 0.05; // Constant offset for startup vibrations
+
+  kalman_filter(x_IMU, p_IMU, q_IMU, r_IMU, yaw_diff, false); // Kalman filtering for IMU data
+
+  // Update errors
+  last_error = error;
+  error = GOAL_YAW - x_IMU;
+  sum_error = sum_error + pow(error, 1 / 3);
+
+  // Write to servos
+  left_servo.writeMicroseconds(SERVO_ANGLE - adj_pid_output);
+  right_servo.writeMicroseconds(SERVO_ANGLE - adj_pid_output);
 }
 
 void setup(void) // Setup (executes once)
@@ -411,12 +411,6 @@ void setup(void) // Setup (executes once)
 
   // delay(17000);
 
-  // Activate PID
-  car_pid.SetMode(AUTOMATIC);
-
-  // The pid outputs between -1025 and 1025 depending on how steer should be adjusted. An output of 0 means no change.
-  car_pid.SetOutputLimits(-MAX_OFFSET, MAX_OFFSET);
-
   // Poll IMU one last time
   bno08x.getSensorEvent(&sensor_value);
   quaternion_to_euler_RV(&sensor_value.un.rotationVector, &ypr, true);
@@ -440,10 +434,11 @@ void loop(void) // Loop (main loop)
   drive_forward(0); // 100% speed in slow decay mode
 
   prev_time = curr_time;
-  curr_time = (micros() - start_time) / 1000000.0f; // Taken to check time against first measurement
 
   temp_sensors.requestTemperatures();              // Request temperature from all devices on the bus
   temperature_c = temp_sensors.getTempCByIndex(0); // Get temperature in Celsius
+
+  curr_time = (micros() - start_time) / 1000000.0f; // Taken to check time against first measurement
 
   pid_loop(); // Run PID controller
 
@@ -468,25 +463,25 @@ void loop(void) // Loop (main loop)
   data[8] = dist_right_m;
 
   // Open csv file
-  file_name = "Run_" + String(run_count) + ".csv";
-  data_file = sd.open(file_name, FILE_WRITE);
+  // file_name = "Run_" + String(run_count) + ".csv";
+  // data_file = sd.open(file_name, FILE_WRITE);
 
-  // Write to csv file
-  if (data_file)
-  {
-    // Write file header
-    if (is_file_new)
-    {
-      data_file.println("Time (s),Raw Temperature (deg C),Filtered Temperature (deg C),Delta T (deg C),Temperature Line (deg C),Raw Yaw Angle (deg),Delta Yaw Angle (deg),Filtered Yaw Angle (deg),Left Wheel Distance (m),Right Wheel Distance (m)");
-      is_file_new = false;
-    }
+  // // Write to csv file
+  // if (data_file)
+  // {
+  //   // Write file header
+  //   if (is_file_new)
+  //   {
+  //     data_file.println("Time (s),Raw Temperature (deg C),Filtered Temperature (deg C),Delta T (deg C),Temperature Line (deg C),Raw Yaw Angle (deg),Delta Yaw Angle (deg),Filtered Yaw Angle (deg),Left Wheel Distance (m),Right Wheel Distance (m)");
+  //     is_file_new = false;
+  //   }
 
-    printer(false, curr_time, data); // Write variable data to the file in CSV format
+  //   printer(false, curr_time, data); // Write variable data to the file in CSV format
 
-    data_file.close();
-  }
+  //   data_file.close();
+  // }
 
-  printer(true, curr_time, data); // Write variable data to serial in CSV format
+  // printer(true, curr_time, data); // Write variable data to serial in CSV format
 
   // if (temp_diff <= temp_change)
   // {
