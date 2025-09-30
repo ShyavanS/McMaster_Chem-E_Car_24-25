@@ -1,14 +1,13 @@
 // Included libraries
 #include <OneWire.h>
-// #include <Wire.h>
-// #include <Adafruit_BNO08x.h>
+#include <Encoder.h>
+#include <Adafruit_BNO08x.h>
 #include <DallasTemperature.h>
-// #include <PID_v1_bc.h>
 #include <Servo.h>
 #include <Adafruit_NeoPixel.h>
 #include "SdFat.h"
 
-#define NUM_PIXELS 1 // Status LED
+#define NUM_LEDS 1 // Status LED
 
 // Define drive motor pins
 #define LEFT_PWM_1 9
@@ -25,36 +24,48 @@
 // Define servo pins
 #define BRAK_SERVO_PWM 13
 #define PROP_SERVO_PWM 4
+#define LEFT_SERVO_PWM MOSI
+#define RIGHT_SERVO_PWM SCK
+
+// Define encoder pins
+#define LEFT_ENC_A 25
+#define LEFT_ENC_B MISO
+#define RIGHT_ENC_A A0
+#define RIGHT_ENC_B A2
 
 #define BRAK_TEMP_SENS A1 // Pin for the teperature sensor data line
 
-// #define BNO08X_RESET -1 // No reset pin for IMU over I2C, only enabled for SPI
-
-// #define BOOST_I2C 0x75 // This is the address when pin on converter is set to LOW
+#define BNO08X_RESET -1 // No reset pin for IMU over I2C, only enabled for SPI
 
 // Define chip select pin for SD card
 #define SD_CS_PIN 23
 
 // Struct for Euler Angles
-// struct euler_t
-// {
-//   float yaw;
-//   float pitch;
-//   float roll;
-// } ypr;
+struct euler_t
+{
+  float yaw;
+  float pitch;
+  float roll;
+} ypr;
 
 // Create servo objects
 Servo brak_servo;
 Servo prop_servo;
+Servo left_servo;
+Servo right_servo;
+
+// Create encoder objects
+Encoder left_drive(LEFT_ENC_A, LEFT_ENC_B);
+Encoder right_drive(RIGHT_ENC_A, RIGHT_ENC_B);
 
 // Create BNO085 instance
-// Adafruit_BNO08x bno08x(BNO08X_RESET);
-// sh2_SensorValue_t sensor_value;
+Adafruit_BNO08x bno08x(BNO08X_RESET);
+sh2_SensorValue_t sensor_value;
 
 OneWire one_wire(BRAK_TEMP_SENS);          // Create a OneWire instance to communicate with the sensor
 DallasTemperature temp_sensors(&one_wire); // Pass OneWire reference to Dallas Temperature sensor
 
-Adafruit_NeoPixel pixel(NUM_PIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800); // Status LED
+Adafruit_NeoPixel pixel(NUM_LEDS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800); // Status LED
 
 // Define files
 SdFat sd;
@@ -67,12 +78,20 @@ String file_name;
 bool is_file_new = true; // Checks for new file
 
 // The target yaw angle to keep car straight
-// double goal_yaw = 0.0;
+double goal_yaw = 0.0;
 
 // Define IMU variables
-// double yaw;            // yaw angle
-// double init_yaw = 0.0; // initial yaw angle
-// double yaw_diff = 0.0; // yaw angle difference
+double yaw;            // yaw angle
+double init_yaw = 0.0; // initial yaw angle
+double yaw_diff = 0.0; // yaw angle difference
+
+// Encoder constants
+const float PPR = 8192.0;
+const double WHEEL_CIRCUMFERENCE_M = 0.395841;
+
+// Wheel distance variables
+double dist_left_m = 0.0;
+double dist_right_m = 0.0;
 
 // Delta temperature
 double temp_diff;
@@ -90,130 +109,45 @@ double init_temp;     // Initial temperature for differential calculation
 // KALMAN FILTER variables
 double x_temp; // Filtered temperature
 double p_temp; // Initial error covariance
-// double x_IMU;  // Filtered temperature
-// double p_IMU;  // Initial error covariance
+double x_IMU;  // Filtered temperature
+double p_IMU;  // Initial error covariance
 
 // Process noise and measurement noise
 double q_temp; // Process noise covariance
 double r_temp; // Measurement noise covariance
-// double q_IMU;  // Process noise covariance
-// double r_IMU;  // Measurement noise covariance
+double q_IMU;  // Process noise covariance
+double r_IMU;  // Measurement noise covariance
 
 // Keeping track of time
 double curr_time = 0.0f;
+double prev_time = 0.0f;
 unsigned long start_time;
-// bool first_run = true;
 
-const int data_size = 4; // Number of items to log
-double data[data_size];  // Data array
-// char data_buf[11];       // Data buffer
+const int DATA_SIZE = 9; // Number of items to log
+double data[DATA_SIZE];  // Data array
 
-// PID Loop variables
-// double pid_output; // The output correction from the PID algorithm
+// PID loop variables
+double error = 0.0;
+double last_error = 0.0;
+double sum_error = 0.0;
 
 // The following numbers need to be adjusted through testing
-// double k_p = 1.5;  // Proportional weighting
-// double k_i = 0.03; // Integral weighting
-// double k_d = 0.3;  // Derivative weighting
+double k_p = 10.0; // Proportional weighting
+double k_i = 0.0;  // Integral weighting
+double k_d = 0.0;  // Derivative weighting
 
-// Offsets & speeds for left and right wheel
-// int left_offset = 0;
-// int right_offset = 0;
-int drive_speed = 128;
-// int max_offset;
-
-// PID control object; input, output, and goal angle are passed by pointer.
-// PID car_pid(&yaw_diff, &pid_output, &goal_yaw, k_p, k_i, k_d, DIRECT);
-
-// Buck boost converter status outputs
-// bool buck_boost_short_circuit;
-// bool buck_boost_overcurrent;
-// bool buck_boost_overvoltage;
-// String buck_boost_op_status;
-
-// void init_buck_boost(void)
-// {
-//   Wire.begin(); // Begin I2C communication
-
-//   // Change internal output voltage to 676.68 mV
-//   // Change LSB
-//   Wire.beginTransmission(BOOST_I2C);
-//   Wire.write(0x00); // Register Address
-//   Wire.write(0x5F); // Changed LSB
-//   Wire.endTransmission();
-
-//   //  Change MSB
-//   Wire.beginTransmission(BOOST_I2C);
-//   Wire.write(0x01); // Register Address
-//   Wire.write(0x04); // Changed MSB
-//   Wire.endTransmission();
-
-//   // Disable current limiter
-//   Wire.beginTransmission(BOOST_I2C);
-//   Wire.write(0x02); // Register Address
-//   Wire.write(0x64); // Changed LSB
-//   Wire.endTransmission();
-
-//   // Enable output
-//   Wire.beginTransmission(BOOST_I2C);
-//   Wire.write(0x06); // Register Address
-//   Wire.write(0xA0); // Changed LSB
-//   Wire.endTransmission();
-// }
-
-// String check_buck_boost_status(void)
-// {
-//   // Read status register
-//   Wire.beginTransmission(BOOST_I2C);
-//   Wire.write(0x07);
-//   Wire.endTransmission(false);
-//   Wire.requestFrom(BOOST_I2C, 1);
-
-//   char status = Wire.read();
-
-//   // Check SCP status
-//   if (((status >> 7) & 0x01))
-//   {
-//     buck_boost_short_circuit = true;
-//   }
-
-//   // Check OCP status
-//   if (((status >> 6) & 0x01))
-//   {
-//     buck_boost_overcurrent = true;
-//   }
-
-//   // Check OVP status
-//   if (((status >> 5) & 0x01))
-//   {
-//     buck_boost_overvoltage = true;
-//   }
-
-//   // Check operating status
-//   switch (status << 6)
-//   {
-//   case 0x00:
-//     return "boost";
-//   case 0x40:
-//     return "buck";
-//   case 0x80:
-//     return "buck-boost";
-//   case 0xC0:
-//     return "reserved";
-//   default:
-//     return "";
-//   }
-// }
+// Offsets & constants for PID
+int left_offset = 0;
+int right_offset = 0;
+const int SERVO_ANGLE = 1475;
+const int MAX_OFFSET = 1024;
+const int YAW_REF = 90;
 
 void drive_forward(int speed) // Drive function
 {
   digitalWrite(LEFT_PWM_1, HIGH);
   digitalWrite(RIGHT_PWM_2, HIGH);
-  // analogWrite(LEFT_PWM_2, speed - left_offset);
-  // analogWrite(LEFT_PWM_2, speed);
   digitalWrite(LEFT_PWM_2, LOW);
-  // analogWrite(RIGHT_PWM_1, speed - right_offset);
-  // analogWrite(RIGHT_PWM_1, speed);
   digitalWrite(RIGHT_PWM_1, LOW);
 }
 
@@ -221,9 +155,7 @@ void stop_driving(void) // Stop function
 {
   digitalWrite(LEFT_PWM_1, HIGH);
   digitalWrite(RIGHT_PWM_2, HIGH);
-  // analogWrite(LEFT_PWM_2, 255);
   digitalWrite(LEFT_PWM_2, HIGH);
-  // analogWrite(RIGHT_PWM_1, 255);
   digitalWrite(RIGHT_PWM_1, HIGH);
 }
 
@@ -248,26 +180,31 @@ void start_stir(int stir_pin_1, int stir_pin_2, int speed) // Start stirring mec
   analogWrite(stir_pin_2, speed); // Set motor to speed obtained through testing
 }
 
-// void PID_loop(void) // Update motor speeds according to PID algorithm
-// {
-//   car_pid.Compute(); // Run compute algorithm and updates pid_output
+void pid_loop(void) // Update steering angle according to PID algorithm
+{
+  // Generate output of controller based on constants & errors
+  double pid_output = (error * k_p + sum_error * k_i + (error - last_error) / (curr_time - prev_time) * k_d) / YAW_REF * MAX_OFFSET;
+  int adj_pid_output = max(min(round(pid_output), -MAX_OFFSET), MAX_OFFSET); // Clamp output to bounds
 
-//   if (pid_output < 0)
-//   {
-//     left_offset = abs(round(pid_output)); // If output needs to be adjusted in positive dir (to the right), increase left wheel speed
-//     right_offset = round(pid_output);     // and decrease right wheel speed.
-//   }
-//   else if (pid_output > 0)
-//   {
-//     right_offset = abs(round(pid_output)); // If output needs to be adjusted in negative dir (to the left), increase right wheel speed
-//     left_offset = -round(pid_output);      // and decrease left wheel speed.
-//   }
-//   else // Otherwise set both speed offsets to zero if output does not need adjustment.
-//   {
-//     left_offset = 0;
-//     right_offset = 0;
-//   }
-// }
+  // Get IMU reading to update error values
+  bno08x.getSensorEvent(&sensor_value);
+  quaternion_to_euler_RV(&sensor_value.un.rotationVector, &ypr, true);
+
+  // Process yaw angle
+  yaw = ypr.yaw;
+  yaw_diff = yaw - init_yaw + 0.05; // Constant offset for startup vibrations
+
+  kalman_filter(x_IMU, p_IMU, q_IMU, r_IMU, yaw_diff, false); // Kalman filtering for IMU data
+
+  // Update errors
+  last_error = error;
+  error = goal_yaw - x_IMU;
+  sum_error = sum_error + pow(error, 1 / 3);
+
+  // Write to servos
+  left_servo.writeMicroseconds(SERVO_ANGLE + adj_pid_output);
+  right_servo.writeMicroseconds(SERVO_ANGLE + adj_pid_output);
+}
 
 void kalman_filter(double x_k, double p_k, double q, double r, double input, bool tempTrue) // Kalman filtering algorithm
 {
@@ -293,18 +230,18 @@ void kalman_filter(double x_k, double p_k, double q, double r, double input, boo
   }
   else
   {
-    // x_IMU = x_k;
-    // p_IMU = p_k;
+    x_IMU = x_k;
+    p_IMU = p_k;
   }
 }
 
-void printer(bool serial_true, double millis_time, double outputs[data_size]) // Output function
+void printer(bool serial_true, double millis_time, double outputs[DATA_SIZE]) // Output function
 {
   if (serial_true) // Print data to serial or SD card file accordingly in .csv format
   {
     Serial.print(millis_time, 6);
 
-    for (int i = 0; i < data_size; i++)
+    for (int i = 0; i < DATA_SIZE; i++)
     {
       Serial.print(",");
       Serial.print(outputs[i], 6);
@@ -316,7 +253,7 @@ void printer(bool serial_true, double millis_time, double outputs[data_size]) //
   {
     data_file.print(millis_time, 6);
 
-    for (int i = 0; i < data_size; i++)
+    for (int i = 0; i < DATA_SIZE; i++)
     {
       data_file.print(",");
       data_file.print(outputs[i], 6);
@@ -327,41 +264,41 @@ void printer(bool serial_true, double millis_time, double outputs[data_size]) //
 }
 
 // Enable reports for IMU
-// void setReports(void)
-// {
-//   Serial.println("Setting desired reports");
-//   if (!bno08x.enableReport(SH2_ARVR_STABILIZED_RV))
-//   {
-//     Serial.println("Could not enable rotation vector");
-//   }
-// }
+void set_reports(void)
+{
+  Serial.println("Setting desired reports");
+  if (!bno08x.enableReport(SH2_ROTATION_VECTOR))
+  {
+    Serial.println("Could not enable rotation vector");
+  }
+}
 
 // Convert Quaternion to Euler Angles to get yaw
-// void quaternionToEuler(float qr, float qi, float qj, float qk, euler_t *ypr, bool degrees = false)
-// {
+void quaternion_to_euler(float qr, float qi, float qj, float qk, euler_t *ypr, bool degrees = false)
+{
 
-//   float sqr = sq(qr);
-//   float sqi = sq(qi);
-//   float sqj = sq(qj);
-//   float sqk = sq(qk);
+  float sqr = sq(qr);
+  float sqi = sq(qi);
+  float sqj = sq(qj);
+  float sqk = sq(qk);
 
-//   ypr->yaw = atan2(2.0 * (qi * qj + qk * qr), (sqi - sqj - sqk + sqr));
-//   ypr->pitch = asin(-2.0 * (qi * qk - qj * qr) / (sqi + sqj + sqk + sqr));
-//   ypr->roll = atan2(2.0 * (qj * qk + qi * qr), (-sqi - sqj + sqk + sqr));
+  ypr->yaw = atan2(2.0 * (qi * qj + qk * qr), (sqi - sqj - sqk + sqr));
+  ypr->pitch = asin(-2.0 * (qi * qk - qj * qr) / (sqi + sqj + sqk + sqr));
+  ypr->roll = atan2(2.0 * (qj * qk + qi * qr), (-sqi - sqj + sqk + sqr));
 
-//   if (degrees)
-//   {
-//     ypr->yaw *= RAD_TO_DEG;
-//     ypr->pitch *= RAD_TO_DEG;
-//     ypr->roll *= RAD_TO_DEG;
-//   }
-// }
+  if (degrees)
+  {
+    ypr->yaw *= RAD_TO_DEG;
+    ypr->pitch *= RAD_TO_DEG;
+    ypr->roll *= RAD_TO_DEG;
+  }
+}
 
 // Pointer function
-// void quaternionToEulerRV(sh2_RotationVectorWAcc_t *rotational_vector, euler_t *ypr, bool degrees = false)
-// {
-//   quaternionToEuler(rotational_vector->real, rotational_vector->i, rotational_vector->j, rotational_vector->k, ypr, degrees);
-// }
+void quaternion_to_euler_RV(sh2_RotationVectorWAcc_t *rotational_vector, euler_t *ypr, bool degrees = false)
+{
+  quaternion_to_euler(rotational_vector->real, rotational_vector->i, rotational_vector->j, rotational_vector->k, ypr, degrees);
+}
 
 void setup(void) // Setup (executes once)
 {
@@ -372,8 +309,7 @@ void setup(void) // Setup (executes once)
   pixel.setPixelColor(0, 255, 0, 0);
   pixel.show();
 
-  // Get time at start
-  start_time = millis();
+  Serial.begin(115200);
 
   while (!sd.begin(config))
   {
@@ -414,13 +350,6 @@ void setup(void) // Setup (executes once)
   pinMode(PROP_STIR_PWM_1, OUTPUT);
   pinMode(PROP_STIR_PWM_2, OUTPUT);
 
-  // Initialize buck-boost converter status outputs
-  // buck_boost_short_circuit = false;
-  // buck_boost_overcurrent = false;
-  // buck_boost_overvoltage = false;
-
-  // init_buck_boost(); // Initialize buck-boost converter
-
   // Setting the stir speed
   start_stir(BRAK_STIR_PWM_1, BRAK_STIR_PWM_2, 255);
   start_stir(PROP_STIR_PWM_1, PROP_STIR_PWM_2, 255);
@@ -429,33 +358,33 @@ void setup(void) // Setup (executes once)
   temp_sensors.requestTemperatures();          // Request temperature from all devices on the bus
   init_temp = temp_sensors.getTempCByIndex(0); // Get temperature in Celsius
 
-  // bno08x.begin_I2C();
-  // setReports();
+  bno08x.begin_I2C();
+  set_reports();
 
   // Poll IMU a few times & wait for initialization value to stabilize
-  // for (int i = 0; i < 5; i++)
-  // {
-  //   bno08x.getSensorEvent(&sensor_value);
-  //   quaternionToEulerRV(&sensor_value.un.arvrStabilizedRV, &ypr, true);
+  for (int i = 0; i < 5; i++)
+  {
+    bno08x.getSensorEvent(&sensor_value);
+    quaternion_to_euler_RV(&sensor_value.un.geoMagRotationVector, &ypr, true);
 
-  //   init_yaw = ypr.yaw;
-  //   yaw = ypr.yaw;
-  //   yaw_diff = yaw - init_yaw;
+    init_yaw = ypr.yaw;
+    yaw = ypr.yaw;
+    yaw_diff = yaw - init_yaw;
 
-  //   delay(200);
-  // }
+    delay(200);
+  }
 
   // Initialize Kalman filter parameters
   x_temp = init_temp; // Initial state estimate
   p_temp = 0.1;       // Initial error covariance
   q_temp = 0.01;      // Process noise covariance
   r_temp = 0.5;       // Measurement noise covariance
-  // x_IMU = yaw_diff;   // Initial state estimate
-  // p_IMU = 0.0;        // Initial error covariance
-  // q_IMU = 0.01;       // Process noise covariance
-  // r_IMU = 5.674;      // Measurement noise covariance
+  x_IMU = yaw_diff;   // Initial state estimate
+  p_IMU = 0.007;      // Initial error covariance
+  q_IMU = 0.005;      // Process noise covariance
+  r_IMU = 0.01;       // Measurement noise covariance
 
-  // Initialize servo to default position
+  // Initialize servos to default position
   prop_servo.writeMicroseconds(450);
   prop_servo.attach(PROP_SERVO_PWM, 400, 2600);
   prop_servo.writeMicroseconds(450);
@@ -464,32 +393,43 @@ void setup(void) // Setup (executes once)
   brak_servo.attach(BRAK_SERVO_PWM, 400, 2600);
   brak_servo.writeMicroseconds(450);
   delay(2000);
+  left_servo.writeMicroseconds(1475);
+  left_servo.attach(LEFT_SERVO_PWM, 400, 2600);
+  left_servo.writeMicroseconds(1475);
+  delay(2000);
+  right_servo.writeMicroseconds(1475);
+  right_servo.attach(RIGHT_SERVO_PWM, 400, 2600);
+  right_servo.writeMicroseconds(1475);
+  delay(2000);
 
   // Dump reactants before starting drive
-  servo_dump(prop_servo, 2500, 3000);
-  delay(7000);
-  servo_dump(brak_servo, 2500, 3000);
+  // servo_dump(prop_servo, 2500, 3000);
+  // delay(7000);
+  // servo_dump(brak_servo, 2500, 3000);
 
   start_time = micros(); // First measurement saved seperately
-  curr_time = 0;         // Set current time to zero from start time
 
-  delay(17000);
-
-  // Set max speed offset according to drive speed
-  // if (drive_speed < 128)
-  // {
-  //   max_offset = drive_speed;
-  // }
-  // else
-  // {
-  //   max_offset = 255 - drive_speed;
-  // }
+  // delay(17000);
 
   // Activate PID
-  // car_pid.SetMode(AUTOMATIC);
+  car_pid.SetMode(AUTOMATIC);
 
-  // The pid outputs between -51 to 51 depending on how the motors should be adjusted. An output of 0 means no change. (This should be adjusted through testing).
-  // car_pid.SetOutputLimits(-max_offset, max_offset);
+  // The pid outputs between -1025 and 1025 depending on how steer should be adjusted. An output of 0 means no change.
+  car_pid.SetOutputLimits(-MAX_OFFSET, MAX_OFFSET);
+
+  // Poll IMU one last time
+  bno08x.getSensorEvent(&sensor_value);
+  quaternion_to_euler_RV(&sensor_value.un.rotationVector, &ypr, true);
+
+  init_yaw = ypr.yaw;
+  yaw = ypr.yaw;
+  yaw_diff = yaw - init_yaw;
+
+  // Reset encoders before starting
+  left_drive.write(0);
+  right_drive.write(0);
+
+  curr_time = (micros() - start_time) / 1000000.0f; // Taken to update prev_time
 
   pixel.setPixelColor(0, 0, 0, 255); // Indicate setup complete status
   pixel.show();
@@ -499,39 +439,33 @@ void loop(void) // Loop (main loop)
 {
   drive_forward(0); // 100% speed in slow decay mode
 
+  prev_time = curr_time;
   curr_time = (micros() - start_time) / 1000000.0f; // Taken to check time against first measurement
-
-  // buck_boost_op_status = check_buck_boost_status();
 
   temp_sensors.requestTemperatures();              // Request temperature from all devices on the bus
   temperature_c = temp_sensors.getTempCByIndex(0); // Get temperature in Celsius
 
-  // bno08x.getSensorEvent(&sensor_value);
-  // quaternionToEulerRV(&sensor_value.un.arvrStabilizedRV, &ypr, true);
+  pid_loop(); // Run PID controller
 
-  // yaw = ypr.yaw;
-  // yaw_diff = yaw - init_yaw;
-
-  // Update kalman filters
+  // Update temperature kalman filter
   kalman_filter(x_temp, p_temp, q_temp, r_temp, temperature_c, true);
-  // kalman_filter(x_IMU, p_IMU, q_IMU, r_IMU, yaw_diff, false);
 
   temp_diff = x_temp - init_temp;
   temp_change = double(0.185) * curr_time - 4.5f; // Calculate temperature change
 
+  dist_left_m = -left_drive.read() / PPR * WHEEL_CIRCUMFERENCE_M;
+  dist_right_m = right_drive.read() / PPR * WHEEL_CIRCUMFERENCE_M;
+
   // Update data array
-  // dtostrf(temperature_c, 3, 6, data_buf);
   data[0] = temperature_c;
-  // dtostrf(x_temp, 3, 6, data_buf);
   data[1] = x_temp;
-  // dtostrf(yaw_diff, 3, 6, data_buf);
   data[2] = temp_diff;
-  // dtostrf(x_IMU, 3, 6, data_buf);
   data[3] = temp_change;
-  // data[4] = String(buck_boost_short_circuit);
-  // data[5] = String(buck_boost_overcurrent);
-  // data[6] = String(buck_boost_overvoltage);
-  // data[7] = buck_boost_op_status;
+  data[4] = yaw;
+  data[5] = yaw_diff;
+  data[6] = x_IMU;
+  data[7] = dist_left_m;
+  data[8] = dist_right_m;
 
   // Open csv file
   file_name = "Run_" + String(run_count) + ".csv";
@@ -543,7 +477,7 @@ void loop(void) // Loop (main loop)
     // Write file header
     if (is_file_new)
     {
-      data_file.println("Time (s),Raw Temperature (deg C),Filtered Temperature (deg C),Delta T (deg C),Temperature Line (deg C)");
+      data_file.println("Time (s),Raw Temperature (deg C),Filtered Temperature (deg C),Delta T (deg C),Temperature Line (deg C),Raw Yaw Angle (deg),Delta Yaw Angle (deg),Filtered Yaw Angle (deg),Left Wheel Distance (m),Right Wheel Distance (m)");
       is_file_new = false;
     }
 
@@ -552,33 +486,20 @@ void loop(void) // Loop (main loop)
     data_file.close();
   }
 
-  // printer(true, curr_time, data); // Write variable data to serial in CSV format
+  printer(true, curr_time, data); // Write variable data to serial in CSV format
 
-  Serial.print(curr_time);
-  Serial.print(",");
-  Serial.print(temperature_c);
-  Serial.print(",");
-  Serial.print(x_temp);
-  Serial.print(",");
-  Serial.print(temp_diff);
-  Serial.print(",");
-  Serial.println(temp_change);
+  // if (temp_diff <= temp_change)
+  // {
+  //   // Stop driving
+  //   stop_driving();
 
-  // Update PID model
-  // PID_loop();
+  //   // Wire.end(); // End I2C comms with buck-boost converter
 
-  if (temp_diff <= temp_change)
-  {
-    // Stop driving
-    stop_driving();
+  //   // Indicate status to be finished
+  //   pixel.setPixelColor(0, 0, 255, 0);
+  //   pixel.show();
 
-    // Wire.end(); // End I2C comms with buck-boost converter
-
-    // Indicate status to be finished
-    pixel.setPixelColor(0, 0, 255, 0);
-    pixel.show();
-
-    while (1)
-      ; // Do nothing for remainder of uptime
-  }
+  //   while (1)
+  //     ; // Do nothing for remainder of uptime
+  // }
 }
