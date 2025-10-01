@@ -1,9 +1,7 @@
 // Included libraries
 #include <OneWire.h>
-// #include <Wire.h>
 #include <Adafruit_BNO08x.h>
 #include <DallasTemperature.h>
-#include <PID_v1_bc.h>
 #include <Servo.h>
 #include <Adafruit_NeoPixel.h>
 
@@ -57,7 +55,7 @@ DallasTemperature temp_sensors(&one_wire); // Pass OneWire reference to Dallas T
 Adafruit_NeoPixel pixel(NUM_LEDS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800); // Status LED
 
 // The target yaw angle to keep car straight
-double goal_yaw = 0.0;
+const float GOAL_YAW = 0.0;
 
 // Define IMU variables
 double yaw;            // yaw angle
@@ -70,6 +68,9 @@ double temp_diff;
 // Temperature change threshold
 double temp_change;
 
+// Last temperature fetched flag
+bool last_fetch;
+
 // variables to store temperature
 double temperature_c; // Current temperature
 double init_temp;     // Initial temperature for differential calculation
@@ -77,77 +78,42 @@ double init_temp;     // Initial temperature for differential calculation
 // KALMAN FILTER variables
 double x_temp; // Filtered temperature
 double p_temp; // Initial error covariance
-double x_IMU;  // Filtered angle
-double p_IMU;  // Initial error covariance
+double x_imu;  // Filtered temperature
+double p_imu;  // Initial error covariance
 
 // Process noise and measurement noise
 double q_temp; // Process noise covariance
 double r_temp; // Measurement noise covariance
-double q_IMU;  // Process noise covariance
-double r_IMU;  // Measurement noise covariance
+double q_imu;  // Process noise covariance
+double r_imu;  // Measurement noise covariance
 
 // Keeping track of time
 double curr_time = 0.0f;
+double prev_time = 0.0f;
 unsigned long start_time;
 
-// PID Loop variables
-double pid_output; // The output correction from the PID algorithm
+// PID loop variables
+double error = 0.0;      // Proportional error
+double last_error = 0.0; // Derivative error
+double sum_error = 0.0;  // Integral error
 
 // The following numbers need to be adjusted through testing
-double k_p = 2.5; // Proportional weighting
-double k_i = 3.0; // Integral weighting
-double k_d = 1.5; // Derivative weighting
+const float K_P = 1.0; // Proportional weighting
+const float K_I = 0.0; // Integral weighting
+const float K_D = 0.0; // Derivative weighting
 
-// Offsets & speeds for left and right wheel
+// Offsets & constants for PID
 int left_offset = 0;
 int right_offset = 0;
-int servo_angle = 1475;
-int max_offset = 1024;
+const int SERVO_ANGLE = 1475;
+const int MAX_OFFSET = 1024;
+const int YAW_REF = 90;
 
-// PID control object; input, output, and goal angle are passed by pointer.
-PID car_pid(&yaw_diff, &pid_output, &goal_yaw, k_p, k_i, k_d, DIRECT);
-
-// void init_buck_boost(void)
-// {
-//   Wire.begin(); // Begin I2C communication
-
-//   // Change internal output voltage to 676.68 mV
-//   // Change LSB
-//   Wire.beginTransmission(BOOST_I2C);
-//   Wire.write(0x00); // Register Address
-//   Wire.write(0x5F); // Changed LSB
-//   Wire.endTransmission();
-
-//   //  Change MSB
-//   Wire.beginTransmission(BOOST_I2C);
-//   Wire.write(0x01); // Register Address
-//   Wire.write(0x04); // Changed MSB
-//   Wire.endTransmission();
-
-//   // Disable current limiter
-//   Wire.beginTransmission(BOOST_I2C);
-//   Wire.write(0x02); // Register Address
-//   Wire.write(0x64); // Changed LSB
-//   Wire.endTransmission();
-
-//   // Enable output
-//   Wire.beginTransmission(BOOST_I2C);
-//   Wire.write(0x06); // Register Address
-//   Wire.write(0xA0); // Changed LSB
-//   Wire.endTransmission();
-
-//   Wire.end();
-// }
-
-void drive_forward(int speed) // Drive function
+void drive_forward(void) // Drive function
 {
   digitalWrite(LEFT_PWM_1, HIGH);
   digitalWrite(RIGHT_PWM_2, HIGH);
-  // analogWrite(LEFT_PWM_2, speed - left_offset);
-  // analogWrite(LEFT_PWM_2, speed);
   digitalWrite(LEFT_PWM_2, LOW);
-  // analogWrite(RIGHT_PWM_1, speed - right_offset);
-  // analogWrite(RIGHT_PWM_1, speed);
   digitalWrite(RIGHT_PWM_1, LOW);
 }
 
@@ -155,9 +121,7 @@ void stop_driving(void) // Stop function
 {
   digitalWrite(LEFT_PWM_1, HIGH);
   digitalWrite(RIGHT_PWM_2, HIGH);
-  // analogWrite(LEFT_PWM_2, 255);
   digitalWrite(LEFT_PWM_2, HIGH);
-  // analogWrite(RIGHT_PWM_1, 255);
   digitalWrite(RIGHT_PWM_1, HIGH);
 }
 
@@ -180,27 +144,6 @@ void start_stir(int stir_pin_1, int stir_pin_2, int speed) // Start stirring mec
 {
   digitalWrite(stir_pin_1, LOW);  // For fast decay
   analogWrite(stir_pin_2, speed); // Set motor to speed obtained through testing
-}
-
-void PID_loop(void) // Update steering angle according to PID algorithm
-{
-  car_pid.Compute(); // Run compute algorithm and updates pid_output
-
-  int pid_increment = round(pid_output / 114.0) * 114.0;
-
-  if (pid_output != 0)
-  {
-    left_offset = -round(pid_output);  // If output needs to be adjusted in positive dir (to the right), increase left steer
-    right_offset = -round(pid_output); // and decrease right steer.
-  }
-  else // Otherwise set both steer offsets to zero if output does not need adjustment.
-  {
-    left_offset = 0;
-    right_offset = 0;
-  }
-
-  left_servo.writeMicroseconds(servo_angle + left_offset);
-  right_servo.writeMicroseconds(servo_angle + right_offset);
 }
 
 void kalman_filter(double x_k, double p_k, double q, double r, double input, bool tempTrue) // Kalman filtering algorithm
@@ -235,7 +178,7 @@ void kalman_filter(double x_k, double p_k, double q, double r, double input, boo
 // Enable reports for IMU
 void set_reports(void)
 {
-  if (!bno08x.enableReport(SH2_GAME_ROTATION_VECTOR))
+  if (!bno08x.enableReport(SH2_ROTATION_VECTOR))
   {
     exit(0);
   }
@@ -262,9 +205,46 @@ void quaternion_to_euler(float qr, float qi, float qj, float qk, euler_t *ypr, b
 }
 
 // Pointer function
-void quaternion_to_euler_RV(sh2_RotationVector_t *rotational_vector, euler_t *ypr, bool degrees = false)
+void quaternion_to_euler_RV(sh2_RotationVectorWAcc_t *rotational_vector, euler_t *ypr, bool degrees = false)
 {
   quaternion_to_euler(rotational_vector->real, rotational_vector->i, rotational_vector->j, rotational_vector->k, ypr, degrees);
+}
+
+void pid_loop(void) // Update steering angle according to PID algorithm
+{
+  // Generate output of controller based on constants & errors
+  double pid_output = (error * K_P + sum_error * K_I + (error - last_error) / (curr_time - prev_time) * K_D) / YAW_REF * MAX_OFFSET;
+  int adj_pid_output = max(min(round(pid_output), MAX_OFFSET), -MAX_OFFSET); // Clamp output to bounds
+
+  // Get IMU reading to update error values
+  bno08x.getSensorEvent(&sensor_value);
+  quaternion_to_euler_RV(&sensor_value.un.rotationVector, &ypr, true);
+
+  // Process yaw angle
+  yaw = ypr.yaw;
+  yaw_diff = yaw - init_yaw + 0.05; // Constant offset for startup vibrations
+
+  kalman_filter(x_imu, p_imu, q_imu, r_imu, yaw_diff, false); // Kalman filtering for IMU data
+
+  // Update errors
+  last_error = error;
+  error = GOAL_YAW - x_imu;
+  sum_error = sum_error + pow(error, 1 / 3);
+
+  // Write to servos
+  left_servo.writeMicroseconds(SERVO_ANGLE - adj_pid_output);
+  right_servo.writeMicroseconds(SERVO_ANGLE - adj_pid_output);
+}
+
+void fetch_temp(void)
+{
+  temperature_c = temp_sensors.getTempCByIndex(0); // Get temperature in Celsius
+
+  // Update temperature kalman filter
+  kalman_filter(x_temp, p_temp, q_temp, r_temp, temperature_c, true);
+
+  temp_diff = x_temp - init_temp; // Update delta temperature
+  last_fetch = true;              // Raise fetch flag to signal ready
 }
 
 void setup(void) // Setup (executes once)
@@ -275,9 +255,6 @@ void setup(void) // Setup (executes once)
   pixel.show();
   pixel.setPixelColor(0, 255, 0, 0);
   pixel.show();
-
-  // Get time at start
-  start_time = millis();
 
   // Setting to drive motors output mode
   pinMode(LEFT_PWM_1, OUTPUT);
@@ -299,9 +276,14 @@ void setup(void) // Setup (executes once)
   start_stir(BRAK_STIR_PWM_1, BRAK_STIR_PWM_2, 255);
   start_stir(PROP_STIR_PWM_1, PROP_STIR_PWM_2, 255);
 
-  temp_sensors.begin();                        // Initialize the DS18B20 sensor
-  temp_sensors.requestTemperatures();          // Request temperature from all devices on the bus
+  temp_sensors.begin();                     // Initialize the DS18B20 sensor
+  temp_sensors.setResolution(11);           // Reduce resolution for faster polling
+  temp_sensors.requestTemperatures();       // Request temperature from all devices on the bus
+  temp_sensors.setWaitForConversion(false); // Disable blocking to allow multitasking
+
   init_temp = temp_sensors.getTempCByIndex(0); // Get temperature in Celsius
+  last_fetch = true;                           // Raise fetch flag to signal ready
+  temp_diff = 0.0;                             // Initialize delta temperature to zero
 
   bno08x.begin_I2C();
   set_reports();
@@ -310,7 +292,7 @@ void setup(void) // Setup (executes once)
   for (int i = 0; i < 5; i++)
   {
     bno08x.getSensorEvent(&sensor_value);
-    quaternion_to_euler_RV(&sensor_value.un.gameRotationVector, &ypr, true);
+    quaternion_to_euler_RV(&sensor_value.un.rotationVector, &ypr, true);
 
     init_yaw = ypr.yaw;
     yaw = ypr.yaw;
@@ -324,10 +306,10 @@ void setup(void) // Setup (executes once)
   p_temp = 0.1;       // Initial error covariance
   q_temp = 0.01;      // Process noise covariance
   r_temp = 0.5;       // Measurement noise covariance
-  x_IMU = yaw_diff;   // Initial state estimate
-  p_IMU = 0.0;        // Initial error covariance
-  q_IMU = 0.01;       // Process noise covariance
-  r_IMU = 5.674;      // Measurement noise covariance
+  x_imu = yaw_diff;   // Initial state estimate
+  p_imu = 0.007;      // Initial error covariance
+  q_imu = 0.005;      // Process noise covariance
+  r_imu = 0.01;       // Measurement noise covariance
 
   // Initialize servos to default position
   prop_servo.writeMicroseconds(450);
@@ -348,20 +330,23 @@ void setup(void) // Setup (executes once)
   delay(2000);
 
   // Dump reactants before starting drive
-  servo_dump(prop_servo, 2500, 3000);
-  delay(7000);
-  servo_dump(brak_servo, 2500, 3000);
+  // servo_dump(prop_servo, 2500, 3000);
+  // delay(7000);
+  // servo_dump(brak_servo, 2500, 3000);
 
   start_time = micros(); // First measurement saved seperately
-  curr_time = 0;         // Set current time to zero from start time
 
-  delay(17000);
+  // delay(17000);
 
-  // Activate PID
-  car_pid.SetMode(AUTOMATIC);
+  /// Poll IMU one last time
+  bno08x.getSensorEvent(&sensor_value);
+  quaternion_to_euler_RV(&sensor_value.un.rotationVector, &ypr, true);
 
-  // The pid outputs between -1025 and 1025 depending on how steer should be adjusted. An output of 0 means no change.
-  car_pid.SetOutputLimits(-max_offset, max_offset);
+  init_yaw = ypr.yaw;
+  yaw = ypr.yaw;
+  yaw_diff = yaw - init_yaw;
+
+  curr_time = (micros() - start_time) / 1000000.0f; // Taken to update prev_time
 
   pixel.setPixelColor(0, 0, 0, 255); // Indicate setup complete status
   pixel.show();
@@ -369,24 +354,24 @@ void setup(void) // Setup (executes once)
 
 void loop(void) // Loop (main loop)
 {
-  drive_forward(0); // 100% speed in slow decay mode
+  drive_forward(); // Start drive
+
+  // Only poll if flag indicates ready state
+  if (last_fetch)
+  {
+    temp_sensors.requestTemperatures(); // Request temperature from all devices on the bus
+
+    last_fetch = false; // System is no longer ready, lower flag
+  }
+  else if (temp_sensors.isConversionComplete())
+  {
+    fetch_temp(); // Fetch temperature after conversion, otherwise continue loop
+  }
 
   curr_time = (micros() - start_time) / 1000000.0f; // Taken to check time against first measurement
 
-  temp_sensors.requestTemperatures();              // Request temperature from all devices on the bus
-  temperature_c = temp_sensors.getTempCByIndex(0); // Get temperature in Celsius
+  pid_loop(); // Run PID controller
 
-  bno08x.getSensorEvent(&sensor_value);
-  quaternion_to_euler_RV(&sensor_value.un.gameRotationVector, &ypr, true);
-
-  yaw = ypr.yaw;
-  yaw_diff = yaw - init_yaw;
-
-  // Update kalman filters
-  kalman_filter(x_temp, p_temp, q_temp, r_temp, temperature_c, true);
-  kalman_filter(x_IMU, p_IMU, q_IMU, r_IMU, yaw_diff, false);
-
-  temp_diff = x_temp - init_temp;
   temp_change = double(0.185) * curr_time - 4.5f; // Calculate temperature change
 
   // Update PID model

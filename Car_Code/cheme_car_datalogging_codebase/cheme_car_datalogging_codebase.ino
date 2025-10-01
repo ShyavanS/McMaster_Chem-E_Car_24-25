@@ -130,9 +130,9 @@ const int DATA_SIZE = 9; // Number of items to log
 double data[DATA_SIZE];  // Data array
 
 // PID loop variables
-double error = 0.0;
-double last_error = 0.0;
-double sum_error = 0.0;
+double error = 0.0;      // Proportional error
+double last_error = 0.0; // Derivative error
+double sum_error = 0.0;  // Integral error
 
 // The following numbers need to be adjusted through testing
 const float K_P = 1.0; // Proportional weighting
@@ -350,8 +350,9 @@ void setup(void) // Setup (executes once)
 
   root.close();
 
+  // Set file numbering
   file_name = "Run_" + String(run_count) + ".csv";
-  
+
   // Setting to drive motors output mode
   pinMode(LEFT_PWM_1, OUTPUT);
   pinMode(LEFT_PWM_2, OUTPUT);
@@ -386,7 +387,7 @@ void setup(void) // Setup (executes once)
   for (int i = 0; i < 5; i++)
   {
     bno08x.getSensorEvent(&sensor_value);
-    quaternion_to_euler_RV(&sensor_value.un.geoMagRotationVector, &ypr, true);
+    quaternion_to_euler_RV(&sensor_value.un.rotationVector, &ypr, true);
 
     init_yaw = ypr.yaw;
     yaw = ypr.yaw;
