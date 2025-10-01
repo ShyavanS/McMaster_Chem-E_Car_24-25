@@ -58,9 +58,12 @@ Adafruit_NeoPixel pixel(NUM_LEDS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800); // Status
 const float GOAL_YAW = 0.0;
 
 // Define IMU variables
-double yaw;            // yaw angle
-double init_yaw = 0.0; // initial yaw angle
-double yaw_diff = 0.0; // yaw angle difference
+double raw_yaw;          // raw yaw angle
+double prev_yaw;         // previous raw yaw angle
+double yaw;              // yaw angle
+double init_yaw = 0.0;   // initial yaw angle
+double yaw_diff = 0.0;   // yaw angle difference
+double yaw_offset = 0.0; // unwrapping offset
 
 // Delta temperature
 double temp_diff;
@@ -221,7 +224,8 @@ void pid_loop(void) // Update steering angle according to PID algorithm
   quaternion_to_euler_RV(&sensor_value.un.rotationVector, &ypr, true);
 
   // Process yaw angle
-  yaw = ypr.yaw;
+  raw_yaw = ypr.yaw;
+  unwrap_yaw();
   yaw_diff = yaw - init_yaw + 0.05; // Constant offset for startup vibrations
 
   kalman_filter(x_imu, p_imu, q_imu, r_imu, yaw_diff, false); // Kalman filtering for IMU data
@@ -229,7 +233,7 @@ void pid_loop(void) // Update steering angle according to PID algorithm
   // Update errors
   last_error = error;
   error = GOAL_YAW - x_imu;
-  sum_error = sum_error + pow(error, 1 / 3);
+  sum_error = max(min(sum_error + cbrt(error), 360), -360);
 
   // Write to servos
   left_servo.writeMicroseconds(SERVO_ANGLE - adj_pid_output);
@@ -245,6 +249,23 @@ void fetch_temp(void)
 
   temp_diff = x_temp - init_temp; // Update delta temperature
   last_fetch = true;              // Raise fetch flag to signal ready
+}
+
+void unwrap_yaw(void) // Unwraps yaw angle to prevent discontinuities
+{
+  double delta = raw_yaw - prev_yaw;
+
+  if (delta > 180.0)
+  {
+    yaw_offset -= 360.0;
+  }
+  else if (delta < -180.0)
+  {
+    yaw_offset += 360.0;
+  }
+
+  yaw = raw_yaw + yaw_offset;
+  prev_yaw = raw_yaw;
 }
 
 void setup(void) // Setup (executes once)
@@ -295,6 +316,8 @@ void setup(void) // Setup (executes once)
     quaternion_to_euler_RV(&sensor_value.un.rotationVector, &ypr, true);
 
     init_yaw = ypr.yaw;
+    raw_yaw = init_yaw;
+    prev_yaw = init_yaw;
     yaw = ypr.yaw;
     yaw_diff = yaw - init_yaw;
 
@@ -343,6 +366,8 @@ void setup(void) // Setup (executes once)
   quaternion_to_euler_RV(&sensor_value.un.rotationVector, &ypr, true);
 
   init_yaw = ypr.yaw;
+  raw_yaw = init_yaw;
+  prev_yaw = init_yaw;
   yaw = ypr.yaw;
   yaw_diff = yaw - init_yaw;
 
