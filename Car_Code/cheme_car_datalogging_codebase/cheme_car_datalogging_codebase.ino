@@ -350,6 +350,8 @@ void setup(void) // Setup (executes once)
 
   root.close();
 
+  file_name = "Run_" + String(run_count) + ".csv";
+  
   // Setting to drive motors output mode
   pinMode(LEFT_PWM_1, OUTPUT);
   pinMode(LEFT_PWM_2, OUTPUT);
@@ -485,7 +487,6 @@ void loop(void) // Loop (main loop)
   data[8] = dist_right_m;
 
   // Open csv file
-  file_name = "Run_" + String(run_count) + ".csv";
   data_file = sd.open(file_name, FILE_WRITE);
 
   // Write to csv file
