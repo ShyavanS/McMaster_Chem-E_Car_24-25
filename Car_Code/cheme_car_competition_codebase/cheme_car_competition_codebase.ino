@@ -58,12 +58,11 @@ Adafruit_NeoPixel pixel(NUM_LEDS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800); // Status
 const float GOAL_YAW = 0.0;
 
 // Define IMU variables
-double raw_yaw;          // raw yaw angle
-double prev_yaw;         // previous raw yaw angle
-double yaw;              // yaw angle
-double init_yaw = 0.0;   // initial yaw angle
-double yaw_diff = 0.0;   // yaw angle difference
-double yaw_offset = 0.0; // unwrapping offset
+double raw_yaw;        // raw yaw angle
+double prev_yaw;       // previous unwrapped yaw angle
+double yaw;            // unwrapped yaw angle
+double init_yaw = 0.0; // initial yaw angle
+double yaw_diff = 0.0; // yaw angle difference
 
 // Delta temperature
 double temp_diff;
@@ -226,14 +225,14 @@ void pid_loop(void) // Update steering angle according to PID algorithm
   // Process yaw angle
   raw_yaw = ypr.yaw;
   unwrap_yaw();
-  yaw_diff = yaw - init_yaw + 0.05; // Constant offset for startup vibrations
+  yaw_diff = yaw - init_yaw;
 
   kalman_filter(x_imu, p_imu, q_imu, r_imu, yaw_diff, false); // Kalman filtering for IMU data
 
   // Update errors
   last_error = error;
   error = GOAL_YAW - x_imu;
-  sum_error = max(min(sum_error + cbrt(error), 360), -360);
+  sum_error = max(min(sum_error + cbrt(error), MAX_OFFSET), -MAX_OFFSET);
 
   // Write to servos
   left_servo.writeMicroseconds(SERVO_ANGLE - adj_pid_output);
@@ -255,17 +254,17 @@ void unwrap_yaw(void) // Unwraps yaw angle to prevent discontinuities
 {
   double delta = raw_yaw - prev_yaw;
 
-  if (delta > 180.0)
+  delta = fmod(delta + 180.0, 360.0);
+
+  if (delta < 0.0)
   {
-    yaw_offset -= 360.0;
-  }
-  else if (delta < -180.0)
-  {
-    yaw_offset += 360.0;
+    delta += 360.0;
   }
 
-  yaw = raw_yaw + yaw_offset;
-  prev_yaw = raw_yaw;
+  delta -= 180.0;
+
+  yaw = prev_yaw + delta;
+  prev_yaw = yaw;
 }
 
 void setup(void) // Setup (executes once)
@@ -318,7 +317,7 @@ void setup(void) // Setup (executes once)
     init_yaw = ypr.yaw;
     raw_yaw = init_yaw;
     prev_yaw = init_yaw;
-    yaw = ypr.yaw;
+    yaw = init_yaw;
     yaw_diff = yaw - init_yaw;
 
     delay(200);
@@ -368,7 +367,7 @@ void setup(void) // Setup (executes once)
   init_yaw = ypr.yaw;
   raw_yaw = init_yaw;
   prev_yaw = init_yaw;
-  yaw = ypr.yaw;
+  yaw = init_yaw;
   yaw_diff = yaw - init_yaw;
 
   curr_time = (micros() - start_time) / 1000000.0f; // Taken to update prev_time
@@ -398,9 +397,6 @@ void loop(void) // Loop (main loop)
   pid_loop(); // Run PID controller
 
   temp_change = double(0.185) * curr_time - 4.5f; // Calculate temperature change
-
-  // Update PID model
-  PID_loop();
 
   // if (temp_diff <= temp_change)
   // {
