@@ -100,7 +100,7 @@ double last_error = 0.0; // Derivative error
 double sum_error = 0.0;  // Integral error
 
 // The following numbers need to be adjusted through testing
-const float K_P = 1.0; // Proportional weighting
+const float K_P = 5.0; // Proportional weighting
 const float K_I = 0.0; // Integral weighting
 const float K_D = 0.0; // Derivative weighting
 
