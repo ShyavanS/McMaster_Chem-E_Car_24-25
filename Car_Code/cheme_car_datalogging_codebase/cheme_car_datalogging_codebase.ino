@@ -80,6 +80,9 @@ bool is_file_new = true; // Checks for new file
 // The target yaw angle to keep car straight
 const float GOAL_YAW = 0.0;
 
+// Rejection threshold for noise in IMU measurements
+const float REJECT_THRESHOLD = 3.0;
+
 // Define IMU variables
 double raw_yaw;        // raw yaw angle
 double prev_yaw;       // previous unwrapped yaw angle
@@ -292,7 +295,7 @@ void pid_loop(void) // Update steering angle according to PID algorithm
   // Process yaw angle
   raw_yaw = ypr.yaw;
   unwrap_yaw();
-  yaw_diff = yaw - init_yaw;
+  yaw_diff = yaw - init_yaw + 1.38; // Constant offset for initial vibrations
 
   kalman_filter(x_imu, p_imu, q_imu, r_imu, yaw_diff, false); // Kalman filtering for IMU data
 
@@ -330,8 +333,17 @@ void unwrap_yaw(void) // Unwraps yaw angle to prevent discontinuities
 
   delta -= 180.0;
 
-  yaw = prev_yaw + delta;
-  prev_yaw = yaw;
+  // Reject any sudden noisy spikes
+  if (fabs(delta) > REJECT_THRESHOLD)
+  {
+    yaw = prev_yaw;
+    prev_yaw = yaw;
+  }
+  else
+  {
+    yaw = prev_yaw + delta;
+    prev_yaw = yaw;
+  }
 }
 
 void setup(void) // Setup (executes once)
@@ -397,6 +409,7 @@ void setup(void) // Setup (executes once)
   temp_sensors.setWaitForConversion(false); // Disable blocking to allow multitasking
 
   init_temp = temp_sensors.getTempCByIndex(0); // Get temperature in Celsius
+  temperature_c = init_temp;                   // Initialize temperature variable
   last_fetch = true;                           // Raise fetch flag to signal ready
   temp_diff = 0.0;                             // Initialize delta temperature to zero
 
@@ -447,13 +460,13 @@ void setup(void) // Setup (executes once)
   delay(2000);
 
   // Dump reactants before starting drive
-  // servo_dump(prop_servo, 2500, 3000);
-  // delay(7000);
-  // servo_dump(brak_servo, 2500, 3000);
+  servo_dump(prop_servo, 2500, 3000);
+  delay(7000);
+  servo_dump(brak_servo, 2500, 3000);
 
   start_time = micros(); // First measurement saved seperately
 
-  // delay(17000);
+  delay(17000);
 
   // Poll IMU one last time
   bno08x.getSensorEvent(&sensor_value);
@@ -533,18 +546,16 @@ void loop(void) // Loop (main loop)
 
   temp_change = 0.185f * curr_time - 4.5f; // Calculate temperature change
 
-  // if (temp_diff <= temp_change)
-  // {
-  //   // Stop driving
-  //   stop_driving();
+  if (temp_diff <= temp_change)
+  {
+    // Stop driving
+    stop_driving();
 
-  //   // Wire.end(); // End I2C comms with buck-boost converter
+    // Indicate status to be finished
+    pixel.setPixelColor(0, 0, 255, 0);
+    pixel.show();
 
-  //   // Indicate status to be finished
-  //   pixel.setPixelColor(0, 0, 255, 0);
-  //   pixel.show();
-
-  //   while (1)
-  //     ; // Do nothing for remainder of uptime
-  // }
+    while (1)
+      ; // Do nothing for remainder of uptime
+  }
 }
