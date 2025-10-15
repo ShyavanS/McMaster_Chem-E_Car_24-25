@@ -29,8 +29,6 @@
 
 #define BNO08X_RESET -1 // No reset pin for IMU over I2C, only enabled for SPI
 
-// #define BOOST_I2C 0x75 // This is the address when pin on converter is set to LOW
-
 // Struct for Euler Angles
 struct euler_t
 {
@@ -103,9 +101,9 @@ double last_error = 0.0; // Derivative error
 double sum_error = 0.0;  // Integral error
 
 // The following numbers need to be adjusted through testing
-const float K_P = 5.0; // Proportional weighting
-const float K_I = 0.0; // Integral weighting
-const float K_D = 0.0; // Derivative weighting
+const float K_P = 13.0; // Proportional weighting
+const float K_I = 0.0;  // Integral weighting
+const float K_D = 0.0;  // Derivative weighting
 
 // Offsets & constants for PID
 int left_offset = 0;
@@ -175,8 +173,8 @@ void kalman_filter(double x_k, double p_k, double q, double r, double input, boo
   }
   else
   {
-    x_IMU = x_k;
-    p_IMU = p_k;
+    x_imu = x_k;
+    p_imu = p_k;
   }
 }
 
@@ -228,7 +226,7 @@ void pid_loop(void) // Update steering angle according to PID algorithm
   // Process yaw angle
   raw_yaw = ypr.yaw;
   unwrap_yaw();
-  yaw_diff = yaw - init_yaw + 1.38; // Constant offset for initial vibrations
+  yaw_diff = yaw - init_yaw;
 
   kalman_filter(x_imu, p_imu, q_imu, r_imu, yaw_diff, false); // Kalman filtering for IMU data
 
@@ -302,8 +300,6 @@ void setup(void) // Setup (executes once)
   pinMode(PROP_STIR_PWM_1, OUTPUT);
   pinMode(PROP_STIR_PWM_2, OUTPUT);
 
-  // init_buck_boost(); // Initialize Buck-Boost Converter
-
   // Setting the stir speed
   start_stir(BRAK_STIR_PWM_1, BRAK_STIR_PWM_2, 255);
   start_stir(PROP_STIR_PWM_1, PROP_STIR_PWM_2, 255);
@@ -373,7 +369,7 @@ void setup(void) // Setup (executes once)
 
   delay(17000);
 
-  /// Poll IMU one last time
+  // Poll IMU one last time
   bno08x.getSensorEvent(&sensor_value);
   quaternion_to_euler_RV(&sensor_value.un.rotationVector, &ypr, true);
 
@@ -393,6 +389,8 @@ void loop(void) // Loop (main loop)
 {
   drive_forward(); // Start drive
 
+  prev_time = curr_time;
+
   // Only poll if flag indicates ready state
   if (last_fetch)
   {
@@ -409,7 +407,7 @@ void loop(void) // Loop (main loop)
 
   pid_loop(); // Run PID controller
 
-  temp_change = double(0.185) * curr_time - 4.5f; // Calculate temperature change
+  temp_change = 0.185f * curr_time - 4.5f; // Calculate temperature change
 
   if (temp_diff <= temp_change)
   {

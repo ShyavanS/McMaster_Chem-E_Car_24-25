@@ -140,9 +140,9 @@ double last_error = 0.0; // Derivative error
 double sum_error = 0.0;  // Integral error
 
 // The following numbers need to be adjusted through testing
-const float K_P = 5.0; // Proportional weighting
-const float K_I = 0.0; // Integral weighting
-const float K_D = 0.0; // Derivative weighting
+const float K_P = 13.0; // Proportional weighting
+const float K_I = 0.0;  // Integral weighting
+const float K_D = 0.0;  // Derivative weighting
 
 // Offsets & constants for PID
 int left_offset = 0;
@@ -295,7 +295,7 @@ void pid_loop(void) // Update steering angle according to PID algorithm
   // Process yaw angle
   raw_yaw = ypr.yaw;
   unwrap_yaw();
-  yaw_diff = yaw - init_yaw + 1.38; // Constant offset for initial vibrations
+  yaw_diff = yaw - init_yaw;
 
   kalman_filter(x_imu, p_imu, q_imu, r_imu, yaw_diff, false); // Kalman filtering for IMU data
 
