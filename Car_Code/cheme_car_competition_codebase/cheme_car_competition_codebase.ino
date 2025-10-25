@@ -4,6 +4,7 @@
 #include <DallasTemperature.h>
 #include <Servo.h>
 #include <Adafruit_NeoPixel.h>
+#include "hardware/timer.h"
 
 #define NUM_LEDS 1 // Status LED
 
@@ -93,7 +94,7 @@ double r_imu;  // Measurement noise covariance
 // Keeping track of time
 double curr_time = 0.0f;
 double prev_time = 0.0f;
-unsigned long start_time;
+uint32_t start_time;
 
 // PID loop variables
 double error = 0.0;      // Proportional error
@@ -132,14 +133,14 @@ void servo_dump(Servo servo, int angle_us, int delay_ms) // Dump reactants into 
 {
   // Rotate to specified position
   servo.writeMicroseconds(angle_us);
-  delay(500);
+  busy_wait_ms(500);
   servo.writeMicroseconds(angle_us);
 
-  delay(delay_ms); // Wait specified delay
+  busy_wait_ms(delay_ms); // Wait specified delay
 
   // Return to default position
   servo.writeMicroseconds(450);
-  delay(500);
+  busy_wait_ms(500);
   servo.writeMicroseconds(450);
 }
 
@@ -329,7 +330,7 @@ void setup(void) // Setup (executes once)
     yaw = init_yaw;
     yaw_diff = yaw - init_yaw;
 
-    delay(200);
+    busy_wait_ms(200);
   }
 
   // Initialize Kalman filter parameters
@@ -346,28 +347,28 @@ void setup(void) // Setup (executes once)
   prop_servo.writeMicroseconds(450);
   prop_servo.attach(PROP_SERVO_PWM, 400, 2600);
   prop_servo.writeMicroseconds(450);
-  delay(2000);
+  busy_wait_ms(2000);
   brak_servo.writeMicroseconds(450);
   brak_servo.attach(BRAK_SERVO_PWM, 400, 2600);
   brak_servo.writeMicroseconds(450);
-  delay(2000);
+  busy_wait_ms(2000);
   left_servo.writeMicroseconds(1475);
   left_servo.attach(LEFT_SERVO_PWM, 400, 2600);
   left_servo.writeMicroseconds(1475);
-  delay(2000);
+  busy_wait_ms(2000);
   right_servo.writeMicroseconds(1475);
   right_servo.attach(RIGHT_SERVO_PWM, 400, 2600);
   right_servo.writeMicroseconds(1475);
-  delay(2000);
+  busy_wait_ms(2000);
 
   // Dump reactants before starting drive
   servo_dump(prop_servo, 2500, 3000);
-  delay(7000);
+  busy_wait_ms(7000);
   servo_dump(brak_servo, 2500, 3000);
 
   start_time = micros(); // First measurement saved seperately
 
-  delay(17000);
+  busy_wait_ms(17000);
 
   // Poll IMU one last time
   bno08x.getSensorEvent(&sensor_value);
@@ -379,7 +380,7 @@ void setup(void) // Setup (executes once)
   yaw = init_yaw;
   yaw_diff = yaw - init_yaw;
 
-  curr_time = (micros() - start_time) / 1000000.0f; // Taken to update prev_time
+  curr_time = (time_us_32() - start_time) / 1000000.0f; // Taken to update prev_time
 
   pixel.setPixelColor(0, 0, 0, 255); // Indicate setup complete status
   pixel.show();
@@ -403,7 +404,7 @@ void loop(void) // Loop (main loop)
     fetch_temp(); // Fetch temperature after conversion, otherwise continue loop
   }
 
-  curr_time = (micros() - start_time) / 1000000.0f; // Taken to check time against first measurement
+  curr_time = (time_us_32() - start_time) / 1000000.0f; // Taken to check time against first measurement
 
   pid_loop(); // Run PID controller
 

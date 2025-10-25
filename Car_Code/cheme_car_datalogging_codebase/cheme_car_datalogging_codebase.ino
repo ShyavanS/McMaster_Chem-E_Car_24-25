@@ -1,10 +1,16 @@
+// Remove macros
+#undef radians
+#undef degrees
+
 // Included libraries
 #include <OneWire.h>
-#include <Encoder.h> // Specific version w/ modifications, don't update
 #include <Adafruit_BNO08x.h>
 #include <DallasTemperature.h>
 #include <Servo.h>
 #include <Adafruit_NeoPixel.h>
+#include "hardware/timer.h"
+#include "encoder/encoder.cpp" // Modified to remove debounce delays, don't replace!
+#include "encoder/encoder.hpp" // Modified to remove debounce delays, don't replace!
 #include "SdFat.h"
 
 #define NUM_LEDS 1 // Status LED
@@ -40,6 +46,8 @@
 // Define chip select pin for SD card
 #define SD_CS_PIN 23
 
+using namespace encoder;
+
 // Struct for Euler Angles
 struct euler_t
 {
@@ -48,15 +56,19 @@ struct euler_t
   float roll;
 } ypr;
 
+// Encoder constants
+const float PPR = 8192.0;
+const double WHEEL_CIRCUMFERENCE_M = 0.398982;
+
 // Create servo objects
 Servo brak_servo;
 Servo prop_servo;
 Servo left_servo;
 Servo right_servo;
 
-// Create encoder objects
-Encoder left_drive(LEFT_ENC_A, LEFT_ENC_B);
-Encoder right_drive(RIGHT_ENC_A, RIGHT_ENC_B);
+// Create encoder objects using only A & B pins, not index, assign to pio0, sm 1 & 3 in reversed direction w/ microstepping for smoothness
+Encoder left_drive(PIO pio0, 1, {LEFT_ENC_A, LEFT_ENC_B}, PIN_UNUSED, REVERSED_DIR, PPR, true);
+Encoder right_drive(PIO pio0, 3, {RIGHT_ENC_A, RIGHT_ENC_B}, PIN_UNUSED, REVERSED_DIR, PPR, true);
 
 // Create BNO085 instance
 Adafruit_BNO08x bno08x(BNO08X_RESET);
@@ -89,10 +101,6 @@ double prev_yaw;       // previous unwrapped yaw angle
 double yaw;            // unwrapped yaw angle
 double init_yaw = 0.0; // initial yaw angle
 double yaw_diff = 0.0; // yaw angle difference
-
-// Encoder constants
-const float PPR = 8192.0;
-const double WHEEL_CIRCUMFERENCE_M = 0.395841;
 
 // Wheel distance variables
 double dist_left_m = 0.0;
@@ -129,7 +137,7 @@ double r_imu;  // Measurement noise covariance
 // Keeping track of time
 double curr_time = 0.0f;
 double prev_time = 0.0f;
-unsigned long start_time;
+uint32_t start_time;
 
 const int DATA_SIZE = 9; // Number of items to log
 double data[DATA_SIZE];  // Data array
@@ -171,14 +179,14 @@ void servo_dump(Servo servo, int angle_us, int delay_ms) // Dump reactants into 
 {
   // Rotate to specified position
   servo.writeMicroseconds(angle_us);
-  delay(500);
+  busy_wait_ms(500);
   servo.writeMicroseconds(angle_us);
 
-  delay(delay_ms); // Wait specified delay
+  busy_wait_ms(delay_ms); // Wait specified delay
 
   // Return to default position
   servo.writeMicroseconds(450);
-  delay(500);
+  busy_wait_ms(500);
   servo.writeMicroseconds(450);
 }
 
@@ -359,7 +367,7 @@ void setup(void) // Setup (executes once)
 
   while (!sd.begin(config))
   {
-    delay(1000); // Wait for a second before retrying
+    busy_wait_ms(1000); // Wait for a second before retrying
   }
 
   root = sd.open("/", FILE_READ); // Open SD root directory
@@ -428,7 +436,7 @@ void setup(void) // Setup (executes once)
     yaw = init_yaw;
     yaw_diff = yaw - init_yaw;
 
-    delay(200);
+    busy_wait_ms(200);
   }
 
   // Initialize Kalman filter parameters
@@ -445,28 +453,28 @@ void setup(void) // Setup (executes once)
   prop_servo.writeMicroseconds(450);
   prop_servo.attach(PROP_SERVO_PWM, 400, 2600);
   prop_servo.writeMicroseconds(450);
-  delay(2000);
+  busy_wait_ms(2000);
   brak_servo.writeMicroseconds(450);
   brak_servo.attach(BRAK_SERVO_PWM, 400, 2600);
   brak_servo.writeMicroseconds(450);
-  delay(2000);
+  busy_wait_ms(2000);
   left_servo.writeMicroseconds(1475);
   left_servo.attach(LEFT_SERVO_PWM, 400, 2600);
   left_servo.writeMicroseconds(1475);
-  delay(2000);
+  busy_wait_ms(2000);
   right_servo.writeMicroseconds(1475);
   right_servo.attach(RIGHT_SERVO_PWM, 400, 2600);
   right_servo.writeMicroseconds(1475);
-  delay(2000);
+  busy_wait_ms(2000);
 
   // Dump reactants before starting drive
   servo_dump(prop_servo, 2500, 3000);
-  delay(7000);
+  busy_wait_ms(7000);
   servo_dump(brak_servo, 2500, 3000);
 
-  start_time = micros(); // First measurement saved seperately
+  start_time = time_us_32(); // First measurement saved seperately
 
-  delay(17000);
+  busy_wait_ms(17000);
 
   // Poll IMU one last time
   bno08x.getSensorEvent(&sensor_value);
@@ -478,11 +486,13 @@ void setup(void) // Setup (executes once)
   yaw = init_yaw;
   yaw_diff = yaw - init_yaw;
 
-  // Reset encoders before starting
-  left_drive.write(0);
-  right_drive.write(0);
+  // Initialize encoders & zero before starting
+  left_drive.init();
+  right_drive.init();
+  left_drive.zero();
+  right_drive.zero();
 
-  curr_time = (micros() - start_time) / 1000000.0f; // Taken to update prev_time
+  curr_time = (time_us_32() - start_time) / 1000000.0f; // Taken to update prev_time
 
   pixel.setPixelColor(0, 0, 0, 255); // Indicate setup complete status
   pixel.show();
@@ -506,12 +516,13 @@ void loop(void) // Loop (main loop)
     fetch_temp(); // Fetch temperature after conversion, otherwise continue loop
   }
 
-  curr_time = (micros() - start_time) / 1000000.0f; // Taken to check time against first measurement
+  curr_time = (time_us_32() - start_time) / 1000000.0f; // Taken to check time against first measurement
 
   pid_loop(); // Run PID controller
 
-  dist_left_m = -left_drive.read() / PPR * WHEEL_CIRCUMFERENCE_M;
-  dist_right_m = right_drive.read() / PPR * WHEEL_CIRCUMFERENCE_M;
+  // Convert encoder counts to distance
+  dist_left_m = (double)left_drive.count() / PPR * WHEEL_CIRCUMFERENCE_M;
+  dist_right_m = (double)right_drive.count() / PPR * WHEEL_CIRCUMFERENCE_M;
 
   // Update data array
   data[0] = temperature_c;
